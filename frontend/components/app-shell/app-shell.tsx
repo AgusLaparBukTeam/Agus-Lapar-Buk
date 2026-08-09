@@ -18,7 +18,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { fetchMe, logout } from "@/lib/api";
 import type { UserRole } from "@/lib/types";
@@ -31,6 +31,22 @@ const nav = [
   ["/audit", "Audit trail", ListChecks, "supervisor"],
   ["/settings", "Settings", Gear, "admin"],
 ] as const;
+
+const SIDEBAR_CHANGE_EVENT = "gateguard.sidebar.change";
+
+function subscribeToSidebar(callback: () => void) {
+  const listener = () => callback();
+  window.addEventListener(SIDEBAR_CHANGE_EVENT, listener);
+  return () => window.removeEventListener(SIDEBAR_CHANGE_EVENT, listener);
+}
+
+function getSidebarSnapshot() {
+  return window.localStorage.getItem("gateguard.sidebar.collapsed") === "true";
+}
+
+function getSidebarServerSnapshot() {
+  return false;
+}
 
 function canSee(role: UserRole, minimum: string) {
   const levels = { operator: 1, supervisor: 2, admin: 3 };
@@ -47,18 +63,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const client = useQueryClient();
   const { data: user } = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
-  const [collapsed, setCollapsed] = useState(false);
-
-  useEffect(() => {
-    setCollapsed(window.localStorage.getItem("gateguard.sidebar.collapsed") === "true");
-  }, []);
+  const collapsed = useSyncExternalStore(subscribeToSidebar, getSidebarSnapshot, getSidebarServerSnapshot);
 
   function toggleSidebar() {
-    setCollapsed((value) => {
-      const next = !value;
-      window.localStorage.setItem("gateguard.sidebar.collapsed", String(next));
-      return next;
-    });
+    const next = !collapsed;
+    window.localStorage.setItem("gateguard.sidebar.collapsed", String(next));
+    window.dispatchEvent(new Event(SIDEBAR_CHANGE_EVENT));
   }
 
   async function signOut() {
