@@ -1,4 +1,4 @@
-import type { AuditEvent, CurrentUser, DashboardSummary, HistoryResponse, MonitoringSummary, ReconciliationResult, ReconciliationStatus } from "@/lib/types";
+import type { AuditEvent, CurrentUser, DashboardSummary, HistoryResponse, MonitoringSummary, ReconciliationResult, ReconciliationStatus, ShipmentCase, ShipmentResponse, WorkQueueResponse } from "@/lib/types";
 
 async function parse<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => null);
@@ -50,3 +50,9 @@ export async function fetchAudit(): Promise<AuditEvent[]> { return parse(await f
 export async function fetchUsers(): Promise<CurrentUser[]> { return parse(await fetch("/api/users", { cache: "no-store" })); }
 export async function createUser(payload: Record<string, string>): Promise<CurrentUser> { return parse(await fetch("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })); }
 export async function updateUser(id: string, payload: Record<string, string | boolean>): Promise<CurrentUser> { return parse(await fetch(`/api/users/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })); }
+export async function fetchShipments(params: URLSearchParams): Promise<ShipmentResponse> { return parse(await fetch(`/api/shipments?${params.toString()}`, { cache: "no-store" })); }
+export async function createShipment(payload: Record<string, string | number | null>): Promise<ShipmentCase> { return parse(await fetch("/api/shipments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })); }
+export async function fetchShipment(id: string): Promise<ShipmentCase> { return parse(await fetch(`/api/shipments/${encodeURIComponent(id)}`, { cache: "no-store" })); }
+export async function fetchWorkQueue(params: URLSearchParams): Promise<WorkQueueResponse> { return parse(await fetch(`/api/work-queue?${params.toString()}`, { cache: "no-store" })); }
+export async function updateWorkQueue(id: string, status: "IN_PROGRESS" | "RESOLVED"): Promise<void> { await parse(await fetch(`/api/work-queue/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) })); }
+export async function decideRelease(id: string, payload: { decision: "AUTHORIZE" | "HOLD"; reason: string }): Promise<{ shipment: ShipmentCase; decision: string; reason: string; decided_by: string; decided_at: string }> { return parse(await fetch(`/api/shipments/${encodeURIComponent(id)}/release-decision`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })); }

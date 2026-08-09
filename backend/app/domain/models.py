@@ -27,6 +27,29 @@ class ReconciliationStatus(StrEnum):
     HOLD = "HOLD"
 
 
+class ShipmentStatus(StrEnum):
+    DRAFT = "DRAFT"
+    DOCUMENTS_REQUIRED = "DOCUMENTS_REQUIRED"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    HOLD = "HOLD"
+    RELEASE_AUTHORIZED = "RELEASE_AUTHORIZED"
+    RELEASE_INVALIDATED = "RELEASE_INVALIDATED"
+    DISPATCHED = "DISPATCHED"
+    CLOSED = "CLOSED"
+
+
+class RiskLevel(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class WorkQueueStatus(StrEnum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+
+
 class UserRole(StrEnum):
     OPERATOR = "operator"
     SUPERVISOR = "supervisor"
@@ -200,6 +223,98 @@ class UserCreateRequest(BaseModel):
 class UserUpdateRequest(BaseModel):
     role: UserRole | None = None
     active: bool | None = None
+
+
+class ShipmentCreateRequest(BaseModel):
+    internal_reference: str = Field(min_length=2, max_length=120)
+    external_reference: str | None = Field(default=None, max_length=120)
+    origin: str = Field(min_length=2, max_length=160)
+    destination: str = Field(min_length=2, max_length=160)
+    transport_mode: str = Field(default="Road", min_length=2, max_length=40)
+    expected_recipient: str | None = Field(default=None, max_length=160)
+    expected_currency: str | None = Field(default=None, max_length=8)
+    expected_total: float | None = Field(default=None, ge=0)
+
+    @field_validator(
+        "internal_reference",
+        "external_reference",
+        "origin",
+        "destination",
+        "transport_mode",
+        "expected_recipient",
+        "expected_currency",
+    )
+    @classmethod
+    def clean_text(cls, value: str | None) -> str | None:
+        return " ".join(value.strip().split()) if value else value
+
+
+class ShipmentResponse(BaseModel):
+    id: str
+    internal_reference: str
+    external_reference: str | None = None
+    origin: str
+    destination: str
+    transport_mode: str
+    status: ShipmentStatus
+    risk_level: RiskLevel
+    assigned_to: str | None = None
+    assigned_display_name: str | None = None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    trusted_reference: dict[str, Any] | None = None
+    open_tasks: int = 0
+
+
+class PaginatedShipments(BaseModel):
+    items: list[ShipmentResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class WorkQueueItem(BaseModel):
+    id: str
+    shipment_id: str
+    shipment_reference: str
+    issue: str
+    priority: RiskLevel
+    stage: str
+    status: WorkQueueStatus
+    assignee: str | None = None
+    due_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkQueueUpdateRequest(BaseModel):
+    status: WorkQueueStatus
+
+
+class PaginatedWorkQueue(BaseModel):
+    items: list[WorkQueueItem]
+    page: int
+    page_size: int
+    total: int
+
+
+class ReleaseDecisionRequest(BaseModel):
+    decision: str = Field(pattern="^(AUTHORIZE|HOLD)$")
+    reason: str = Field(min_length=5, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def clean_reason(cls, value: str) -> str:
+        return " ".join(value.strip().split())
+
+
+class ReleaseDecisionResponse(BaseModel):
+    shipment: ShipmentResponse
+    decision: str
+    reason: str
+    decided_by: str
+    decided_at: datetime
 
 
 class PaginatedReconciliations(BaseModel):

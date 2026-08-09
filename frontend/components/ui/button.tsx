@@ -1,11 +1,17 @@
-import { Button as KumoButton } from "@cloudflare/kumo/components/button";
+import { Button as KumoButton, LinkButton as KumoLinkButton } from "@cloudflare/kumo/components/button";
 import type { ComponentProps } from "react";
 
 type KumoButtonProps = ComponentProps<typeof KumoButton>;
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+type KumoLinkButtonProps = ComponentProps<typeof KumoLinkButton>;
+type Variant = "primary" | "secondary" | "danger" | "ghost" | "link";
 
 export function Button({ variant = "primary", ...props }: Omit<KumoButtonProps, "variant"> & { variant?: Variant }) {
-  const kumoVariant = variant === "danger" ? "destructive" : variant;
+  const kumoVariant = variant === "danger" ? "destructive" : variant === "link" ? "ghost" : variant;
   const kumoProps = { ...props, variant: kumoVariant } as KumoButtonProps;
   return <KumoButton {...kumoProps} />;
+}
+
+export function ActionLink({ variant = "primary", ...props }: Omit<KumoLinkButtonProps, "variant"> & { variant?: Variant }) {
+  const kumoVariant = variant === "danger" ? "destructive" : variant === "link" ? "ghost" : variant;
+  return <KumoLinkButton {...props} variant={kumoVariant} />;
 }

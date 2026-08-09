@@ -1,15 +1,31 @@
 "use client";
 
-import Link from "next/link";
+import { ChartLine, ClipboardText, House, ListChecks, Package, ShieldCheck } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchDashboard } from "@/lib/api";
+import { ActionLink } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { fetchDashboard } from "@/lib/api";
 
-const cards = [["reconciliations_today", "Rekonsiliasi hari ini"], ["clear_today", "CLEAR"], ["review_today", "REVIEW"], ["hold_today", "HOLD"], ["awaiting_review", "Menunggu review"], ["overridden", "Di-override"]] as const;
+const metrics = [
+  ["reconciliations_today", "Checks today", "Documents checked today"],
+  ["clear_today", "Ready to release", "No material differences found"],
+  ["review_today", "Needs review", "A person should confirm this"],
+  ["hold_today", "On hold", "Do not release yet"],
+  ["awaiting_review", "Waiting for review", "Open decisions"],
+  ["overridden", "Decisions updated", "Supervisor changes recorded"],
+] as const;
 
 export default function DashboardPage() {
   const { data, isPending, isError } = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard, refetchInterval: 30_000 });
-  if (isPending) return <div className="py-16 text-sm text-[var(--subtle)]">Memuat ringkasan operasional…</div>;
-  if (isError || !data) return <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">Ringkasan dashboard tidak tersedia.</div>;
-  return <div><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><p className="text-xs uppercase tracking-[0.16em] text-[var(--subtle)]">Overview · {data.date}</p><h1 className="mt-2 text-2xl font-semibold tracking-tight">Operational dashboard</h1><p className="mt-1 text-sm text-[var(--subtle)]">Ringkasan keputusan rekonsiliasi yang tersimpan di GateGuard.</p></div><Link href="/reconcile" className="rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-medium text-white">Rekonsiliasi baru</Link></div><div className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{cards.map(([key, label]) => <div key={key} className="border-l-4 border-[var(--accent)] bg-white p-4 shadow-sm"><div className="text-xs text-[var(--subtle)]">{label}</div><div className="mt-2 text-2xl font-semibold">{data[key]}</div></div>)}</div><div className="mt-7 grid gap-5 xl:grid-cols-[1.4fr_0.6fr]"><section className="overflow-hidden rounded-lg border border-[var(--border)] bg-white"><div className="flex items-center justify-between border-b border-[var(--border)] p-4"><div><h2 className="font-semibold">Aktivitas terbaru</h2><p className="mt-1 text-xs text-[var(--subtle)]">Hasil yang paling baru diproses.</p></div><Link href="/history" className="text-xs font-medium text-[var(--accent)]">Buka history</Link></div>{data.recent.length === 0 ? <p className="p-5 text-sm text-[var(--subtle)]">Belum ada rekonsiliasi tersimpan.</p> : <div className="divide-y divide-[var(--border)]">{data.recent.map((item) => <Link key={item.session_id} href={`/history/${item.session_id}`} className="flex items-center justify-between gap-4 p-4 hover:bg-[var(--muted)]"><div className="min-w-0"><div className="truncate text-sm font-medium">{item.documents.delivery_order?.shipment_id.value || item.session_id}</div><div className="mt-1 text-xs text-[var(--subtle)]">{new Date(item.created_at).toLocaleString("id-ID")} · {item.processing_ms} ms</div></div><StatusBadge status={item.effective_status} /></Link>)}</div>}</section><section className="rounded-lg border border-[var(--border)] bg-white p-5"><h2 className="font-semibold">Processing health</h2><div className="mt-5 flex items-end gap-3"><span className="text-3xl font-semibold">{Math.round(data.average_processing_ms)}</span><span className="pb-1 text-xs text-[var(--subtle)]">ms average</span></div><p className="mt-3 text-sm leading-6 text-[var(--subtle)]">Latency dihitung dari hasil rekonsiliasi yang benar-benar tersimpan hari ini.</p><div className="mt-6 border-t border-[var(--border)] pt-4 text-xs"><div className="font-medium">Readiness</div><div className="mt-2 flex justify-between"><span className="text-[var(--subtle)]">Application</span><span className="font-medium text-green-700">{data.readiness.application}</span></div><div className="mt-1 flex justify-between"><span className="text-[var(--subtle)]">Database</span><span className="font-medium text-green-700">{data.readiness.database}</span></div></div></section></div></div>;
+  if (isPending) return <div className="page-loading">Loading your workspace…</div>;
+  if (isError || !data) return <div role="alert" className="notice notice--danger">The workspace summary is not available right now.</div>;
+  return <div>
+    <PageHeader icon={House} title="Overview" description="A clear view of shipments, checks, and decisions that need attention." actions={<ActionLink href="/shipments/new" icon={Package}>Create shipment</ActionLink>} />
+    <section className="metric-grid" aria-label="Operational summary">{metrics.map(([key, label, description]) => <div className="metric-cell" key={key}><span>{label}</span><strong>{data[key]}</strong><small>{description}</small></div>)}</section>
+    <div className="dashboard-grid">
+      <section className="data-panel"><div className="data-panel__header"><div><h2>Recent checks</h2><p>The latest document checks stored in GateGuard.</p></div><ActionLink href="/history" variant="ghost">View all</ActionLink></div>{data.recent.length === 0 ? <div className="empty-state"><ClipboardText size={22} /><strong>No checks yet</strong><span>Start with a shipment and upload its documents.</span><ActionLink href="/shipments/new">Create shipment</ActionLink></div> : <div className="activity-list">{data.recent.map((item) => <a key={item.session_id} href={`/history/${item.session_id}`} className="activity-row"><div><strong>{String(item.documents.delivery_order?.shipment_id.value || item.session_id.slice(0, 8))}</strong><small>{new Date(item.created_at).toLocaleString("en-GB")} · {item.mismatches.length} findings</small></div><StatusBadge status={item.effective_status} /></a>)}</div>}</section>
+      <section className="data-panel"><div className="data-panel__header"><div><h2>Decision quality</h2><p>Measured from saved checks, not estimates.</p></div><ChartLine size={20} /></div><div className="quality-value"><strong>{Math.round(data.average_processing_ms)}</strong><span>ms average processing</span></div><dl className="definition-list"><div><dt>Application</dt><dd className="status-text status-text--good"><ShieldCheck size={15} /> {data.readiness.application}</dd></div><div><dt>Database</dt><dd className="status-text status-text--good"><ShieldCheck size={15} /> {data.readiness.database}</dd></div></dl><ActionLink href="/monitoring" variant="ghost" icon={ListChecks}>View service status</ActionLink></section>
+    </div>
+  </div>;
 }

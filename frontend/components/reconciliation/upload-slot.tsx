@@ -57,7 +57,7 @@ export function UploadSlot({
             <div className="truncate text-sm font-medium">{file.name}</div>
             <div className="text-xs text-[var(--subtle)]">{(file.size / 1024).toFixed(0)} KB</div>
           </div>
-          <Button variant="ghost" aria-label={`Hapus ${label}`} onClick={() => accept(null)}>
+          <Button variant="ghost" aria-label={`Remove ${label}`} onClick={() => accept(null)}>
             <X size={16} />
           </Button>
         </div>
@@ -67,7 +67,7 @@ export function UploadSlot({
           className="mt-5 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-[var(--border)] text-sm text-[var(--subtle)] hover:bg-[var(--muted)]"
           onClick={() => inputRef.current?.click()}
         >
-          Tarik file ke sini atau pilih file
+          Drop a file here or choose one
         </button>
       )}
 

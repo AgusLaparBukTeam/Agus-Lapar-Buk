@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -25,6 +26,9 @@ from app.domain.models import (
     OverrideRequest,
     ReconciliationResult,
     ReconciliationStatus,
+    RiskLevel,
+    ShipmentStatus,
+    WorkQueueStatus,
 )
 
 
@@ -107,6 +111,85 @@ class AuditEventRow(Base):
     entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
     request_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ShipmentCaseRow(Base):
+    __tablename__ = "shipment_cases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    internal_reference: Mapped[str] = mapped_column(String(120), index=True)
+    external_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    origin: Mapped[str] = mapped_column(String(160))
+    destination: Mapped[str] = mapped_column(String(160))
+    transport_mode: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    risk_level: Mapped[str] = mapped_column(String(16), index=True)
+    assigned_to: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TrustedShipmentReferenceRow(Base):
+    __tablename__ = "trusted_shipment_references"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    shipment_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("shipment_cases.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    order_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    shipment_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    expected_recipient: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    expected_destination: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    expected_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    expected_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source_system: Mapped[str] = mapped_column(String(80))
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ReviewTaskRow(Base):
+    __tablename__ = "review_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    shipment_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("shipment_cases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    issue: Mapped[str] = mapped_column(String(240))
+    priority: Mapped[str] = mapped_column(String(16), index=True)
+    stage: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    assignee: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ReleaseDecisionRow(Base):
+    __tablename__ = "release_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    shipment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("shipment_cases.id", ondelete="CASCADE"), index=True
+    )
+    decision: Mapped[str] = mapped_column(String(16))
+    reason: Mapped[str] = mapped_column(Text)
+    decided_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
@@ -236,6 +319,285 @@ class ReconciliationRepository:
             if user:
                 user.last_login_at = user.updated_at = datetime.now(UTC)
                 session.commit()
+
+    @staticmethod
+    def _shipment_dict(session: Session, row: ShipmentCaseRow) -> dict[str, Any]:
+        reference = session.scalar(
+            select(TrustedShipmentReferenceRow).where(
+                TrustedShipmentReferenceRow.shipment_id == row.id
+            )
+        )
+        assignee = session.get(UserRow, row.assigned_to) if row.assigned_to else None
+        open_tasks = (
+            session.scalar(
+                select(func.count(ReviewTaskRow.id)).where(
+                    ReviewTaskRow.shipment_id == row.id,
+                    ReviewTaskRow.status != WorkQueueStatus.RESOLVED.value,
+                )
+            )
+            or 0
+        )
+        trusted = None
+        if reference:
+            trusted = {
+                "order_reference": reference.order_reference,
+                "shipment_reference": reference.shipment_reference,
+                "expected_recipient": reference.expected_recipient,
+                "expected_destination": reference.expected_destination,
+                "expected_currency": reference.expected_currency,
+                "expected_total": reference.expected_total,
+                "source_system": reference.source_system,
+                "retrieved_at": reference.retrieved_at,
+            }
+        return {
+            "id": row.id,
+            "internal_reference": row.internal_reference,
+            "external_reference": row.external_reference,
+            "origin": row.origin,
+            "destination": row.destination,
+            "transport_mode": row.transport_mode,
+            "status": row.status,
+            "risk_level": row.risk_level,
+            "assigned_to": row.assigned_to,
+            "assigned_display_name": assignee.display_name if assignee else None,
+            "created_by": row.created_by,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+            "trusted_reference": trusted,
+            "open_tasks": int(open_tasks),
+        }
+
+    def create_shipment(self, *, payload: dict[str, Any], actor: UserRow) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        shipment = ShipmentCaseRow(
+            id=str(uuid.uuid4()),
+            internal_reference=payload["internal_reference"],
+            external_reference=payload.get("external_reference"),
+            origin=payload["origin"],
+            destination=payload["destination"],
+            transport_mode=payload.get("transport_mode") or "Road",
+            status=ShipmentStatus.DOCUMENTS_REQUIRED.value,
+            risk_level=RiskLevel.LOW.value,
+            created_by=actor.id,
+            created_at=now,
+            updated_at=now,
+        )
+        reference = TrustedShipmentReferenceRow(
+            id=str(uuid.uuid4()),
+            shipment_id=shipment.id,
+            order_reference=payload.get("external_reference"),
+            shipment_reference=payload["internal_reference"],
+            expected_recipient=payload.get("expected_recipient"),
+            expected_destination=payload["destination"],
+            expected_currency=payload.get("expected_currency"),
+            expected_total=payload.get("expected_total"),
+            source_system="Workspace entry",
+            retrieved_at=now,
+        )
+        task = ReviewTaskRow(
+            id=str(uuid.uuid4()),
+            shipment_id=shipment.id,
+            issue="Add the shipment documents for review.",
+            priority=RiskLevel.LOW.value,
+            stage="Documents",
+            status=WorkQueueStatus.OPEN.value,
+            created_at=now,
+            updated_at=now,
+        )
+        with self.session_factory() as session:
+            session.add_all([shipment, reference, task])
+            session.commit()
+            session.refresh(shipment)
+            return self._shipment_dict(session, shipment)
+
+    def list_shipments(
+        self, *, page: int, page_size: int, status: str | None = None, query: str | None = None
+    ) -> tuple[list[dict[str, Any]], int]:
+        with self.session_factory() as session:
+            filters = []
+            if status:
+                filters.append(ShipmentCaseRow.status == status)
+            if query:
+                term = f"%{query.strip()}%"
+                filters.append(
+                    or_(
+                        ShipmentCaseRow.internal_reference.like(term),
+                        ShipmentCaseRow.external_reference.like(term),
+                        ShipmentCaseRow.destination.like(term),
+                    )
+                )
+            rows = list(
+                session.scalars(
+                    select(ShipmentCaseRow)
+                    .where(*filters)
+                    .order_by(ShipmentCaseRow.updated_at.desc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+            )
+            total = session.scalar(select(func.count(ShipmentCaseRow.id)).where(*filters)) or 0
+            return [self._shipment_dict(session, row) for row in rows], int(total)
+
+    def get_shipment(self, shipment_id: str) -> dict[str, Any]:
+        with self.session_factory() as session:
+            row = session.get(ShipmentCaseRow, shipment_id)
+            if row is None:
+                raise NotFoundError("Shipment was not found.")
+            return self._shipment_dict(session, row)
+
+    def list_work_queue(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None = None,
+        priority: str | None = None,
+        assignee: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        with self.session_factory() as session:
+            filters = []
+            if status:
+                filters.append(ReviewTaskRow.status == status)
+            if priority:
+                filters.append(ReviewTaskRow.priority == priority)
+            if assignee == "unassigned":
+                filters.append(ReviewTaskRow.assignee.is_(None))
+            elif assignee:
+                filters.append(ReviewTaskRow.assignee == assignee)
+            stmt = (
+                select(ReviewTaskRow, ShipmentCaseRow)
+                .join(ShipmentCaseRow, ShipmentCaseRow.id == ReviewTaskRow.shipment_id)
+                .where(*filters)
+                .order_by(ReviewTaskRow.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            rows = list(session.execute(stmt))
+            total = session.scalar(select(func.count(ReviewTaskRow.id)).where(*filters)) or 0
+            items = [
+                {
+                    "id": task.id,
+                    "shipment_id": shipment.id,
+                    "shipment_reference": shipment.internal_reference,
+                    "issue": task.issue,
+                    "priority": task.priority,
+                    "stage": task.stage,
+                    "status": task.status,
+                    "assignee": (
+                        session.get(UserRow, task.assignee).display_name
+                        if task.assignee and session.get(UserRow, task.assignee)
+                        else None
+                    ),
+                    "due_at": task.due_at,
+                    "created_at": task.created_at,
+                    "updated_at": task.updated_at,
+                }
+                for task, shipment in rows
+            ]
+            return items, int(total)
+
+    def update_work_task(self, task_id: str, *, status: str, actor: UserRow) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            task = session.get(ReviewTaskRow, task_id)
+            if task is None:
+                raise NotFoundError("Work queue item was not found.")
+            task.status = status
+            task.assignee = (
+                actor.id
+                if status == WorkQueueStatus.IN_PROGRESS.value
+                else task.assignee
+            )
+            task.updated_at = now
+            shipment = session.get(ShipmentCaseRow, task.shipment_id)
+            if shipment:
+                remaining = (
+                    session.scalar(
+                        select(func.count(ReviewTaskRow.id)).where(
+                            ReviewTaskRow.shipment_id == shipment.id,
+                            ReviewTaskRow.status != WorkQueueStatus.RESOLVED.value,
+                        )
+                    )
+                    or 0
+                )
+                if remaining == 0 and shipment.status in {
+                    ShipmentStatus.DOCUMENTS_REQUIRED.value,
+                    ShipmentStatus.REVIEW_REQUIRED.value,
+                }:
+                    shipment.status = ShipmentStatus.REVIEW_REQUIRED.value
+                shipment.updated_at = now
+            session.commit()
+            return {
+                "id": task.id,
+                "shipment_id": task.shipment_id,
+                "shipment_reference": shipment.internal_reference if shipment else task.shipment_id,
+                "issue": task.issue,
+                "priority": task.priority,
+                "stage": task.stage,
+                "status": task.status,
+                "assignee": actor.display_name if task.assignee == actor.id else None,
+                "due_at": task.due_at,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+            }
+
+    def decide_release(
+        self, shipment_id: str, *, decision: str, reason: str, actor: UserRow
+    ) -> tuple[dict[str, Any], datetime]:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            shipment = session.get(ShipmentCaseRow, shipment_id)
+            if shipment is None:
+                raise NotFoundError("Shipment was not found.")
+            open_tasks = (
+                session.scalar(
+                    select(func.count(ReviewTaskRow.id)).where(
+                        ReviewTaskRow.shipment_id == shipment_id,
+                        ReviewTaskRow.status != WorkQueueStatus.RESOLVED.value,
+                    )
+                )
+                or 0
+            )
+            if decision == "AUTHORIZE" and open_tasks:
+                raise GateGuardError(
+                    "Resolve all open shipment checks before authorizing release.",
+                    code="REVIEW_REQUIRED",
+                    status_code=409,
+                )
+            shipment.status = (
+                ShipmentStatus.RELEASE_AUTHORIZED.value
+                if decision == "AUTHORIZE"
+                else ShipmentStatus.HOLD.value
+            )
+            shipment.risk_level = (
+                RiskLevel.LOW.value if decision == "AUTHORIZE" else RiskLevel.HIGH.value
+            )
+            shipment.updated_at = now
+            session.add(
+                ReleaseDecisionRow(
+                    id=str(uuid.uuid4()),
+                    shipment_id=shipment_id,
+                    decision=decision,
+                    reason=reason,
+                    decided_by=actor.id,
+                    created_at=now,
+                )
+            )
+            if decision == "HOLD":
+                session.add(
+                    ReviewTaskRow(
+                        id=str(uuid.uuid4()),
+                        shipment_id=shipment_id,
+                        issue=reason,
+                        priority=RiskLevel.HIGH.value,
+                        stage="Release decision",
+                        status=WorkQueueStatus.OPEN.value,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+            return self._shipment_dict(session, shipment), now
 
     def create_session(self, *, token_hash: str, user_id: str, expires_at: datetime) -> None:
         now = datetime.now(UTC)

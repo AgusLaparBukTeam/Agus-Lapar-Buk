@@ -2,6 +2,9 @@ export type DocumentType = "invoice" | "packing_list" | "delivery_order";
 export type ReconciliationStatus = "CLEAR" | "REVIEW" | "HOLD";
 export type Severity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type UserRole = "operator" | "supervisor" | "admin";
+export type ShipmentStatus = "DRAFT" | "DOCUMENTS_REQUIRED" | "REVIEW_REQUIRED" | "HOLD" | "RELEASE_AUTHORIZED" | "RELEASE_INVALIDATED" | "DISPATCHED" | "CLOSED";
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
+export type WorkQueueStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED";
 
 export interface CurrentUser {
   id: string;
@@ -122,10 +125,54 @@ export interface AuditEvent {
 export interface MonitoringSummary {
   application: string;
   database: string;
-  environment: string;
   version: string;
-  extraction_provider: string;
   provider_configured: boolean;
-  limits: { max_upload_bytes: number; max_pdf_pages: number };
   volume: Record<string, unknown>;
 }
+
+export interface TrustedShipmentReference {
+  order_reference?: string | null;
+  shipment_reference?: string | null;
+  expected_recipient?: string | null;
+  expected_destination?: string | null;
+  expected_currency?: string | null;
+  expected_total?: number | null;
+  source_system: string;
+  retrieved_at: string;
+}
+
+export interface ShipmentCase {
+  id: string;
+  internal_reference: string;
+  external_reference?: string | null;
+  origin: string;
+  destination: string;
+  transport_mode: string;
+  status: ShipmentStatus;
+  risk_level: RiskLevel;
+  assigned_to?: string | null;
+  assigned_display_name?: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  trusted_reference?: TrustedShipmentReference | null;
+  open_tasks: number;
+}
+
+export interface ShipmentResponse { items: ShipmentCase[]; page: number; page_size: number; total: number; }
+
+export interface WorkQueueItem {
+  id: string;
+  shipment_id: string;
+  shipment_reference: string;
+  issue: string;
+  priority: RiskLevel;
+  stage: string;
+  status: WorkQueueStatus;
+  assignee?: string | null;
+  due_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkQueueResponse { items: WorkQueueItem[]; page: number; page_size: number; total: number; }

@@ -1,9 +1,15 @@
 "use client";
+
+import { Archive } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
+import { PageHeader } from "@/components/ui/page-header";
 import { fetchAudit } from "@/lib/api";
+
+const eventLabels: Record<string, string> = { "auth.login.success": "Signed in", "auth.logout": "Signed out", "reconciliation.created": "Document check completed", "shipment.created": "Shipment created", "shipment.release_decision": "Release decision recorded", "user.created": "Person added", "user.updated": "Access updated" };
+
 export default function AuditPage() {
   const { data, isPending, isError } = useQuery({ queryKey: ["audit"], queryFn: fetchAudit });
-  if (isPending) return <p className="py-12 text-sm text-[var(--subtle)]">Memuat audit trail…</p>;
-  if (isError || !data) return <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">Audit trail tidak tersedia atau akses ditolak.</div>;
-  return <div><p className="text-xs uppercase tracking-[0.16em] text-[var(--subtle)]">Immutable application events</p><h1 className="mt-2 text-2xl font-semibold">Audit trail</h1><p className="mt-1 text-sm text-[var(--subtle)]">Event identitas dan operasi penting yang dicatat server.</p><div className="mt-7 overflow-x-auto rounded-lg border border-[var(--border)] bg-white"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[var(--muted)] text-xs text-[var(--subtle)]"><tr><th className="px-4 py-3">Waktu</th><th className="px-4 py-3">Event</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Entity</th><th className="px-4 py-3">Metadata</th></tr></thead><tbody>{data.map((event) => <tr key={event.id} className="border-t border-[var(--border)]"><td className="whitespace-nowrap px-4 py-3 text-xs text-[var(--subtle)]">{new Date(event.created_at).toLocaleString("id-ID")}</td><td className="px-4 py-3 font-medium">{event.event_type}</td><td className="px-4 py-3">{event.actor_display_name || "System"}</td><td className="px-4 py-3 text-xs">{event.entity_type}{event.entity_id ? ` · ${event.entity_id.slice(0, 8)}` : ""}</td><td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{JSON.stringify(event.metadata)}</td></tr>)}</tbody></table></div></div>;
+  if (isPending) return <div className="page-loading">Loading activity…</div>;
+  if (isError || !data) return <div role="alert" className="notice notice--danger">Activity log is not available right now.</div>;
+  return <div><PageHeader icon={Archive} title="Activity log" description="A shared record of important shipment checks, decisions, and access changes." /><section className="data-panel data-panel--wide"><div className="data-panel__header"><div><h2>Recent activity</h2><p>Events are recorded with the person and item involved.</p></div></div><div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Activity</th><th>Person</th><th>Item</th><th>Details</th></tr></thead><tbody>{data.map((event) => <tr key={event.id}><td>{new Date(event.created_at).toLocaleString("en-GB")}</td><td className="font-medium">{eventLabels[event.event_type] || event.event_type}</td><td>{event.actor_display_name || "System"}</td><td>{event.entity_type}{event.entity_id ? ` · ${event.entity_id.slice(0, 8)}` : ""}</td><td>{event.metadata.reason ? String(event.metadata.reason) : event.metadata.decision ? `Decision: ${String(event.metadata.decision)}` : "Recorded"}</td></tr>)}</tbody></table></div></section></div>;
 }

@@ -23,11 +23,20 @@ from app.domain.models import (
     LoginRequest,
     OverrideRequest,
     PaginatedReconciliations,
+    PaginatedShipments,
+    PaginatedWorkQueue,
     ReconciliationResult,
     ReconciliationStatus,
+    ReleaseDecisionRequest,
+    ReleaseDecisionResponse,
+    ShipmentCreateRequest,
+    ShipmentResponse,
+    ShipmentStatus,
     UserCreateRequest,
     UserResponse,
     UserUpdateRequest,
+    WorkQueueItem,
+    WorkQueueUpdateRequest,
 )
 from app.repositories.reconciliations import ReconciliationRepository, UserRow, user_dict
 from app.services.extraction import ExtractionRouter
@@ -63,6 +72,15 @@ def parse_boundary(value: str | None, *, end: bool = False) -> datetime | None:
     parsed = datetime.fromisoformat(value)
     parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     return parsed + timedelta(days=1) if end and len(value) == 10 else parsed
+
+
+def readiness_summary() -> dict[str, str]:
+    try:
+        get_repository().ping()
+        database = "healthy"
+    except Exception:
+        database = "unavailable"
+    return {"application": "healthy", "database": database}
 
 
 @router.post("/api/auth/login", response_model=UserResponse)
@@ -214,8 +232,121 @@ def dashboard(_: UserRow = Depends(current_user)):
     )
     return DashboardSummary(
         date=today.isoformat(),
-        readiness={"application": "healthy", "database": "healthy"},
+        readiness=readiness_summary(),
         **summary,
+    )
+
+
+@router.get("/api/shipments", response_model=PaginatedShipments)
+def list_shipments(
+    page: int = 1,
+    page_size: int = 25,
+    status: str | None = None,
+    query: str | None = None,
+    _: UserRow = Depends(current_user),
+):
+    if not 1 <= page <= 100_000 or not 1 <= page_size <= 100:
+        raise GateGuardError("Invalid pagination values.", code="VALIDATION_ERROR", status_code=422)
+    if status and status not in {item.value for item in ShipmentStatus}:
+        raise GateGuardError("Invalid shipment status.", code="VALIDATION_ERROR", status_code=422)
+    items, total = get_repository().list_shipments(
+        page=page,
+        page_size=page_size,
+        status=status,
+        query=query,
+    )
+    return PaginatedShipments(items=items, page=page, page_size=page_size, total=total)
+
+
+@router.post("/api/shipments", response_model=ShipmentResponse, status_code=201)
+def create_shipment(
+    body: ShipmentCreateRequest,
+    request: Request,
+    user: UserRow = Depends(current_user),
+):
+    shipment = get_repository().create_shipment(payload=body.model_dump(), actor=user)
+    get_repository().record_audit(
+        "shipment.created",
+        "shipment",
+        entity_id=shipment["id"],
+        actor=user,
+        metadata={"status": shipment["status"]},
+        request_id=request.state.request_id,
+    )
+    return ShipmentResponse.model_validate(shipment)
+
+
+@router.get("/api/shipments/{shipment_id}", response_model=ShipmentResponse)
+def get_shipment(shipment_id: str, _: UserRow = Depends(current_user)):
+    return ShipmentResponse.model_validate(get_repository().get_shipment(shipment_id))
+
+
+@router.get("/api/work-queue", response_model=PaginatedWorkQueue)
+def work_queue(
+    page: int = 1,
+    page_size: int = 25,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee: str | None = None,
+    _: UserRow = Depends(current_user),
+):
+    if not 1 <= page <= 100_000 or not 1 <= page_size <= 100:
+        raise GateGuardError("Invalid pagination values.", code="VALIDATION_ERROR", status_code=422)
+    items, total = get_repository().list_work_queue(
+        page=page,
+        page_size=page_size,
+        status=status,
+        priority=priority,
+        assignee=assignee,
+    )
+    return PaginatedWorkQueue(items=items, page=page, page_size=page_size, total=total)
+
+
+@router.patch("/api/work-queue/{task_id}", response_model=WorkQueueItem)
+def update_work_queue(
+    task_id: str,
+    body: WorkQueueUpdateRequest,
+    request: Request,
+    user: UserRow = Depends(current_user),
+):
+    item = get_repository().update_work_task(task_id, status=body.status.value, actor=user)
+    get_repository().record_audit(
+        "work_queue.updated",
+        "review_task",
+        entity_id=task_id,
+        actor=user,
+        metadata={"status": body.status.value},
+        request_id=request.state.request_id,
+    )
+    return WorkQueueItem.model_validate(item)
+
+
+@router.post(
+    "/api/shipments/{shipment_id}/release-decision", response_model=ReleaseDecisionResponse
+)
+def release_decision(
+    shipment_id: str,
+    body: ReleaseDecisionRequest,
+    request: Request,
+    user: UserRow = Depends(require_role("supervisor", "admin")),
+):
+    shipment, decided_at = get_repository().decide_release(
+        shipment_id, decision=body.decision, reason=body.reason, actor=user
+    )
+    get_repository().record_audit(
+        "shipment.release_decision",
+        "shipment",
+        entity_id=shipment_id,
+        actor=user,
+        metadata={"decision": body.decision, "reason": body.reason},
+        request_id=request.state.request_id,
+    )
+    return ReleaseDecisionResponse(
+        shipment=shipment,
+        decision=body.decision,
+        reason=body.reason,
+        decided_by=user.display_name,
+        decided_at=decided_at,
     )
 
 
@@ -240,19 +371,11 @@ def audit(_: UserRow = Depends(require_role("admin", "supervisor"))):
 @router.get("/api/monitoring")
 def monitoring(_: UserRow = Depends(current_user)):
     settings = get_settings()
-    database = "healthy"
-    try:
-        get_repository().ping()
-    except Exception:
-        database = "unavailable"
     volume = get_repository().dashboard(datetime.now(UTC) - timedelta(days=1), datetime.now(UTC))
     volume.pop("recent", None)
     return {
-        "application": "healthy",
-        "database": database,
-        "environment": settings.app_env,
+        **readiness_summary(),
         "version": settings.app_version,
-        "extraction_provider": settings.extraction_provider,
         "provider_configured": settings.extraction_provider == "local"
         or bool(settings.openai_api_key)
         or settings.extraction_provider == "paddle",

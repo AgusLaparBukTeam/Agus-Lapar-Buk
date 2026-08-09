@@ -4,7 +4,7 @@ import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
   title: "GateGuard",
-  description: "Pre-dispatch shipment document assurance",
+  description: "Shipment assurance workspace",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
