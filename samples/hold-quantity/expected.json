@@ -1,0 +1,7 @@
+{
+  "expected_status": "HOLD",
+  "expected_mismatches": [
+    "QUANTITY_MISMATCH"
+  ],
+  "synthetic": true
+}
