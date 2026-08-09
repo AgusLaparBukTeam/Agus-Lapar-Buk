@@ -82,6 +82,14 @@ jobs:
           APP_API_KEY: ci-service-key-012345678901234567890123456789
           APP_PUBLIC_ORIGIN: https://gateguard.example.com
           POSTGRES_PASSWORD: ci-postgres-password
+          SEED_USER_1_EMAIL: admin@gateguard.local
+          SEED_USER_1_PASSWORD: ci-seed-password-1
+          SEED_USER_1_DISPLAY_NAME: GateGuard Admin
+          SEED_USER_1_ROLE: admin
+          SEED_USER_2_EMAIL: operator@gateguard.local
+          SEED_USER_2_PASSWORD: ci-seed-password-2
+          SEED_USER_2_DISPLAY_NAME: GateGuard Operator
+          SEED_USER_2_ROLE: operator
         run: docker compose -f docker-compose.prod.yml config
 
       - name: Remove temporary compose environment

@@ -16,6 +16,7 @@ RUN pip install --requirement /app/requirements.txt
 COPY --chown=gateguard:gateguard backend/app /app/app
 COPY --chown=gateguard:gateguard backend/alembic /app/alembic
 COPY --chown=gateguard:gateguard backend/alembic.ini /app/alembic.ini
+COPY --chown=gateguard:gateguard backend/scripts /app/scripts
 
 USER gateguard
 EXPOSE 8000

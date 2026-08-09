@@ -36,9 +36,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (!user) return null;
   return (
     <div className="min-h-screen lg:flex">
-      <aside className="border-b border-[var(--border)] bg-[#102338] text-white lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col lg:border-b-0 lg:border-r lg:border-white/10">
+      <aside className="border-b border-[var(--border)] bg-[#20130b] text-white lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col lg:border-b-0 lg:border-r lg:border-white/10">
         <div className="flex items-center gap-3 px-5 py-5">
-          <span className="grid h-9 w-9 place-items-center rounded-md bg-[#e5b95c] text-[#102338]"><ShieldCheck size={20} /></span>
+          <span className="grid h-9 w-9 place-items-center rounded-md bg-[var(--accent)] text-white"><ShieldCheck size={20} /></span>
           <div><div className="font-semibold tracking-tight">GateGuard</div><div className="text-[11px] text-white/60">Operations console</div></div>
         </div>
         <nav className="flex gap-1 overflow-x-auto px-3 pb-3 lg:block lg:flex-1 lg:overflow-visible lg:py-4" aria-label="Navigasi aplikasi">
