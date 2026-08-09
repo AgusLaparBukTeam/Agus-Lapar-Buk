@@ -13,6 +13,7 @@ frontend/node_modules/
 .next/
 frontend/.next/
 coverage/
+.coverage
 playwright-report/
 test-results/
 uploads/

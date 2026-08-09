@@ -1,6 +1,7 @@
 import io
-from reportlab.pdfgen import canvas
+
 from fastapi.testclient import TestClient
+from reportlab.pdfgen import canvas
 
 from app.main import app
 

@@ -11,7 +11,6 @@ from PIL import Image, UnidentifiedImageError
 
 from app.core.errors import InvalidUploadError
 
-
 SUPPORTED = {
     ".pdf": {"application/pdf"},
     ".png": {"image/png"},

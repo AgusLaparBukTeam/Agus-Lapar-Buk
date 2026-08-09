@@ -4,7 +4,6 @@ import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
 
-
 LEGAL_ENTITY_TOKENS = {"pt", "cv", "tbk", "persero"}
 MAX_ABS_NUMERIC = Decimal("1e24")
 

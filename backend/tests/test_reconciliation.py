@@ -1,7 +1,7 @@
+from conftest import make_doc
+
 from app.domain.models import DocumentType, MismatchType, ReconciliationStatus
 from app.domain.reconciliation import reconcile
-
-from conftest import make_doc
 
 
 def triplet(**overrides):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, String, Text, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -59,7 +59,7 @@ class ReconciliationRepository:
             session.execute(select(ReconciliationRow.id).limit(1))
 
     def save(self, result: ReconciliationResult) -> ReconciliationResult:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with self.session_factory() as session:
             row = session.get(ReconciliationRow, result.session_id)
             if row is None:
@@ -134,7 +134,7 @@ class ReconciliationRepository:
             if row is None:
                 raise NotFoundError("Reconciliation session was not found.")
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             result = ReconciliationResult.model_validate_json(row.result_json)
             # Determine the previous operational decision from immutable history when present.
             latest = session.scalar(

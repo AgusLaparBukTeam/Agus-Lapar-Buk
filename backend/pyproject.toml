@@ -6,7 +6,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
   "fastapi==0.139.0",
   "uvicorn[standard]>=0.35,<1",
-  "pydantic>=2.14,<3",
+  "pydantic>=2.13,<3",
   "pydantic-settings>=2.14,<3",
   "sqlalchemy==2.0.51",
   "python-multipart>=0.0.20,<1",
@@ -32,6 +32,7 @@ ocr = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100

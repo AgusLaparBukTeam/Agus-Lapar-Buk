@@ -355,18 +355,17 @@ class OpenAIExtractor(Extractor):
             "Content-Type": "application/json",
         }
         try:
-            async with self._semaphore:
-                async with httpx.AsyncClient(
-                    timeout=self.settings.openai_timeout_seconds,
-                    follow_redirects=False,
-                ) as client:
-                    response = await client.post(
-                        self.settings.openai_base_url.rstrip("/") + "/responses",
-                        headers=headers,
-                        json=payload,
-                    )
-                    response.raise_for_status()
-                    body = response.json()
+            async with self._semaphore, httpx.AsyncClient(
+                timeout=self.settings.openai_timeout_seconds,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    self.settings.openai_base_url.rstrip("/") + "/responses",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                body = response.json()
         except httpx.TimeoutException as exc:
             raise ProviderError("The configured AI provider timed out.") from exc
         except httpx.HTTPStatusError as exc:

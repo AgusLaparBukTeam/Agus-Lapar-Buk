@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -126,7 +126,7 @@ class AuditState(BaseModel):
 
 class ReconciliationResult(BaseModel):
     session_id: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     status: ReconciliationStatus
     reason: str
     recommended_action: str

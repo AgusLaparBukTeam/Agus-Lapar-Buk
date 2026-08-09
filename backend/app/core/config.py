@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     database_url: str = "sqlite:///./gateguard.db"
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     max_upload_bytes: int = 10 * 1024 * 1024
     max_pdf_pages: int = 50
     max_pdf_text_chars: int = 500_000
@@ -82,7 +82,8 @@ class Settings(BaseSettings):
             raise ValueError("Wildcard CORS origins are forbidden in production")
         if self.database_url.startswith("sqlite"):
             raise ValueError(
-                "SQLite is supported only for local development. Configure PostgreSQL for APP_ENV=production"
+                "SQLite is supported only for local development. "
+                "Configure PostgreSQL for APP_ENV=production"
             )
         return self
 

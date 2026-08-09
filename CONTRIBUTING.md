@@ -8,14 +8,14 @@ Backend:
 
 ```bash
 cd backend
-uv sync --extra dev
+uv sync --locked --extra dev
 ```
 
 Frontend:
 
 ```bash
 cd frontend
-npm install
+npm ci --include=dev
 ```
 
 ## Before opening a pull request

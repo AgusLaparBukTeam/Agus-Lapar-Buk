@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install uv
@@ -48,15 +48,32 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
+          cache: npm
       - name: Install dependencies
-        run: npm install
+        run: npm ci --include=dev
       - name: Test
         run: npm test
       - name: Lint
         run: npm run lint
       - name: Build
         run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare compose environment
+        run: cp .env.example .env
+      - name: Validate development Compose configuration
+        run: docker compose config
+      - name: Validate production Compose configuration
+        env:
+          APP_API_KEY: ci-service-key-012345678901234567890123456789
+          APP_PUBLIC_ORIGIN: https://gateguard.example.com
+          POSTGRES_PASSWORD: ci-postgres-password
+        run: docker compose -f docker-compose.prod.yml config

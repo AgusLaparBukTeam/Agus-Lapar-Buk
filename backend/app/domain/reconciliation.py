@@ -26,7 +26,6 @@ from app.domain.normalization import (
     parse_number,
 )
 
-
 CRITICAL_FIELDS = ("recipient", "destination")
 
 

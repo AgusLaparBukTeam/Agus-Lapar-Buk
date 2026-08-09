@@ -64,7 +64,7 @@ The frontend is available at `http://localhost:3000`. The backend is bound to lo
 
 ```bash
 cd backend
-uv sync --extra dev
+uv sync --locked --extra dev
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
@@ -72,7 +72,7 @@ uv run uvicorn app.main:app --reload --port 8000
 
 ```bash
 cd frontend
-npm install
+npm ci --include=dev
 npm run dev
 ```
 
