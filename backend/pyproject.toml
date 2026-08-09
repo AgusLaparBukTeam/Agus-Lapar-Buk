@@ -23,7 +23,7 @@ dev = [
   "pytest>=8.4,<9",
   "pytest-cov>=6,<8",
   "ruff>=0.12,<1",
-  "reportlab>=4.4,<5",
+  "reportlab>=4.4,<6",
 ]
 ocr = [
   "paddleocr[doc-parser]>=3.5,<4",
