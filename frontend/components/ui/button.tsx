@@ -6,5 +6,6 @@ type Variant = "primary" | "secondary" | "danger" | "ghost";
 
 export function Button({ variant = "primary", ...props }: Omit<KumoButtonProps, "variant"> & { variant?: Variant }) {
   const kumoVariant = variant === "danger" ? "destructive" : variant;
-  return <KumoButton {...props} variant={kumoVariant} />;
+  const kumoProps = { ...props, variant: kumoVariant } as KumoButtonProps;
+  return <KumoButton {...kumoProps} />;
 }
