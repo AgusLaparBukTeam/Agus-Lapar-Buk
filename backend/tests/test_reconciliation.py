@@ -22,9 +22,11 @@ def test_clear_when_consistent():
 
 
 def test_hold_on_quantity_mismatch_with_estimate():
-    docs = triplet(**{
-        DocumentType.PACKING_LIST: {"quantity": 90},
-    })
+    docs = triplet(
+        **{
+            DocumentType.PACKING_LIST: {"quantity": 90},
+        }
+    )
     status, _, _, mismatches = reconcile(docs)
     assert status == ReconciliationStatus.HOLD
     q = next(m for m in mismatches if m.type == MismatchType.QUANTITY_MISMATCH)
@@ -32,29 +34,35 @@ def test_hold_on_quantity_mismatch_with_estimate():
 
 
 def test_hold_on_wrong_recipient():
-    docs = triplet(**{
-        DocumentType.DELIVERY_ORDER: {"recipient": "PT Salah Tujuan"},
-    })
+    docs = triplet(
+        **{
+            DocumentType.DELIVERY_ORDER: {"recipient": "PT Salah Tujuan"},
+        }
+    )
     status, _, _, mismatches = reconcile(docs)
     assert status == ReconciliationStatus.HOLD
     assert any(m.type == MismatchType.WRONG_RECIPIENT for m in mismatches)
 
 
 def test_review_on_low_confidence_critical_field():
-    docs = triplet(**{
-        DocumentType.INVOICE: {"confidence": 0.4},
-    })
+    docs = triplet(
+        **{
+            DocumentType.INVOICE: {"confidence": 0.4},
+        }
+    )
     status, _, _, mismatches = reconcile(docs)
     assert status == ReconciliationStatus.REVIEW
     assert any(m.type == MismatchType.LOW_CONFIDENCE_EXTRACTION for m in mismatches)
 
 
 def test_llm_heuristic_confidence_cannot_auto_clear():
-    docs = triplet(**{
-        DocumentType.INVOICE: {"confidence": 0.65},
-        DocumentType.PACKING_LIST: {"confidence": 0.65},
-        DocumentType.DELIVERY_ORDER: {"confidence": 0.65},
-    })
+    docs = triplet(
+        **{
+            DocumentType.INVOICE: {"confidence": 0.65},
+            DocumentType.PACKING_LIST: {"confidence": 0.65},
+            DocumentType.DELIVERY_ORDER: {"confidence": 0.65},
+        }
+    )
     status, _, _, mismatches = reconcile(docs)
     assert status == ReconciliationStatus.REVIEW
     assert any(m.type == MismatchType.LOW_CONFIDENCE_EXTRACTION for m in mismatches)
@@ -94,8 +102,7 @@ def test_review_when_line_item_coverage_is_not_proven():
 
     assert status == ReconciliationStatus.REVIEW
     assert any(
-        m.type == MismatchType.LOW_CONFIDENCE_EXTRACTION and m.field == "items"
-        for m in mismatches
+        m.type == MismatchType.LOW_CONFIDENCE_EXTRACTION and m.field == "items" for m in mismatches
     )
 
 

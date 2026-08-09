@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     const upstream = await backendFetch("/api/reconcile", {
       method: "POST",
       body: form,
-    });
+    }, request.headers.get("cookie"));
     return passthrough(upstream);
   } catch (err) {
     return backendFailure(err);

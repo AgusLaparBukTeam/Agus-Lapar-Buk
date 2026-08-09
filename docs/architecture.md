@@ -27,7 +27,7 @@ The browser is untrusted. It never receives backend service credentials or provi
 
 ### BFF to API
 
-The BFF is the intended application client for the backend. In production, both layers should sit behind an identity-aware ingress. The service API key protects the backend from direct unauthenticated calls; it is not a substitute for user authentication or RBAC.
+The BFF is the intended application client for the backend. It forwards the HttpOnly session cookie while keeping the service API key server-side. The service API key protects the backend from direct unauthenticated calls; it is not a substitute for user authentication or RBAC.
 
 ### Documents to extraction
 
@@ -39,7 +39,7 @@ Provider output is untrusted evidence. Critical values include provenance and co
 
 ### Override path
 
-Supervisor override uses a credential separate from the BFF service key and records actor, reason, prior state, final state, and timestamp. A real deployment should replace shared override credentials with authenticated user identity and role-based authorization.
+Supervisor override requires a supervisor/admin session and records the authenticated user id, display-name snapshot, reason, prior state, final state, and timestamp. The request cannot supply an arbitrary actor or shared supervisor credential.
 
 ## Decision semantics
 

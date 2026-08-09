@@ -1,5 +1,6 @@
 import io
 
+from conftest import login
 from fastapi.testclient import TestClient
 from reportlab.pdfgen import canvas
 
@@ -28,6 +29,7 @@ def make_pdf(label: str, doc_id: str, quantity: int = 100) -> bytes:
 
 
 def post_triplet(client: TestClient, packing_quantity: int = 100):
+    login(client)
     return client.post(
         "/api/reconcile",
         files={
@@ -73,7 +75,8 @@ def test_same_binary_document_cannot_clear_three_slots():
         "packing_list": ("packing-copy.pdf", payload, "application/pdf"),
         "delivery_order": ("delivery-copy.pdf", payload, "application/pdf"),
     }
-    response = TestClient(app).post("/api/reconcile", files=files)
+    client = login(TestClient(app))
+    response = client.post("/api/reconcile", files=files)
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "INVALID_UPLOAD"
     assert "same file" in response.json()["error"]["message"].lower()

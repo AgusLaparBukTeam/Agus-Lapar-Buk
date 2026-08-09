@@ -98,9 +98,7 @@ def _compare_critical_text(
         (doc, getattr(doc, field)) for doc in docs
     ]
     low = [
-        (doc, value)
-        for doc, value in values
-        if value.value is None or value.confidence < threshold
+        (doc, value) for doc, value in values if value.value is None or value.confidence < threshold
     ]
     if low:
         return [
@@ -344,10 +342,7 @@ def reconcile(
                     )
                 )
 
-    maps = {
-        doc.document_type: _item_map(doc, confidence_threshold)
-        for doc in docs
-    }
+    maps = {doc.document_type: _item_map(doc, confidence_threshold) for doc in docs}
     all_skus = sorted({sku for mapping in maps.values() for sku in mapping})
 
     for sku in all_skus:
@@ -407,8 +402,7 @@ def reconcile(
             continue
 
         descriptions = [
-            (doc, item, normalize_text(str(item.description.value or "")))
-            for doc, item in present
+            (doc, item, normalize_text(str(item.description.value or ""))) for doc, item in present
         ]
         if all(
             item.description.confidence >= confidence_threshold and normalized
@@ -417,8 +411,7 @@ def reconcile(
             normalized_descriptions = [normalized for _, _, normalized in descriptions]
             if len(set(normalized_descriptions)) > 1:
                 evidence = [
-                    _ev(doc, "items.description", item.description)
-                    for doc, item, _ in descriptions
+                    _ev(doc, "items.description", item.description) for doc, item, _ in descriptions
                 ]
                 if _close_text_variation(normalized_descriptions):
                     mismatches.append(
@@ -507,8 +500,11 @@ def reconcile(
             )
         )
 
-    if any(m.severity in {Severity.HIGH, Severity.CRITICAL} and
-           m.type != MismatchType.LOW_CONFIDENCE_EXTRACTION for m in mismatches):
+    if any(
+        m.severity in {Severity.HIGH, Severity.CRITICAL}
+        and m.type != MismatchType.LOW_CONFIDENCE_EXTRACTION
+        for m in mismatches
+    ):
         return (
             ReconciliationStatus.HOLD,
             "A material cross-document conflict was detected.",

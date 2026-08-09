@@ -1,164 +1,87 @@
 # GateGuard
 
-GateGuard checks shipment documents before dispatch. It reconciles a **Surat Jalan / Delivery Order**, **Invoice**, and **Packing List**, then returns one of three operational states:
-
-- `CLEAR` — required evidence is present and consistent.
-- `REVIEW` — evidence is incomplete, ambiguous, or below the confidence threshold.
-- `HOLD` — a material cross-document conflict was detected.
-
-Extraction and decision-making are deliberately separated. OCR or model output can supply structured evidence, but it cannot issue an operational status by itself. `CLEAR`, `REVIEW`, and `HOLD` are produced by deterministic reconciliation rules.
+GateGuard is an internal operations console for pre-dispatch shipment document assurance. It accepts a Surat Jalan / Delivery Order, Invoice, and Packing List, extracts structured evidence, and applies deterministic `CLEAR`, `REVIEW`, or `HOLD` rules. Extraction may be probabilistic; the operational decision is not.
 
 ## Architecture
 
 ```text
 Browser
-  │
-  ▼
-Next.js BFF
-  │ server-side backend credential
-  ▼
-FastAPI
-  ├─ upload validation
-  ├─ document extraction
-  │  ├─ PDF text extraction
-  │  ├─ OpenAI adapter (optional)
-  │  └─ PaddleOCR adapter (optional)
-  ├─ normalization + reconciliation
-  └─ audit repository
+  -> Next.js operations console + BFF (HttpOnly session cookie, server API key)
+  -> FastAPI modular monolith
+       auth / sessions / RBAC / audit
+       reconciliation API + query endpoints
+       extraction adapters + deterministic domain engine
+  -> PostgreSQL in production, SQLite for local development/tests
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for the trust boundaries and decision flow.
+The browser never receives the backend service key, provider credentials, database credentials, or session token through JavaScript. The BFF forwards the browser cookie and keeps the service credential server-side.
 
-## Stack
+## Operations console
 
-**Frontend**
+- `/login` — database-backed login.
+- `/dashboard` — persisted daily counts, latency, and recent activity.
+- `/reconcile` — three-file reconciliation workspace and authorized override flow.
+- `/history` and `/history/[id]` — paginated history and durable structured investigation.
+- `/monitoring` — application/database/provider readiness and real persisted volume.
+- `/audit` — supervisor/admin audit events.
+- `/settings` and `/settings/users` — safe runtime information and admin-only user management.
 
-- Next.js 16
-- React 19
-- TypeScript
-- TanStack Query
-- Zod
-- Vitest
+Roles are `operator`, `supervisor`, and `admin`. Operators can reconcile and inspect results; supervisors can override and view operational audit events; admins can manage users and view all audit events. Backend dependencies enforce these policies; hiding a frontend control is not the security boundary.
 
-**Backend**
-
-- Python 3.11+
-- FastAPI
-- SQLAlchemy
-- Alembic
-- PostgreSQL for production
-- SQLite for local development
-
-## Quick start
-
-### Docker Compose
+## Local setup
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-The frontend is available at `http://localhost:3000`. The backend is bound to loopback at `http://127.0.0.1:8000` and is normally accessed through the Next.js BFF.
-
-### Backend
+Or run services directly:
 
 ```bash
 cd backend
-uv sync --locked --extra dev
-uv run uvicorn app.main:app --reload --port 8000
-```
+python -m venv .venv
+.venv\\Scripts\\activate
+python -m pip install -e ".[dev]"
+alembic upgrade head
+python scripts/create_admin.py
+uvicorn app.main:app --reload --port 8000
 
-### Frontend
-
-```bash
-cd frontend
+cd ../frontend
 npm ci --include=dev
 npm run dev
 ```
 
+The first admin is created interactively. The password is never committed or logged. In production, run migrations before the application and then run the same bootstrap command against the production database.
+
+## Database and security
+
+Migrations are in `backend/alembic/versions`. The current schema includes `users`, opaque-token `sessions`, `reconciliations`, append-only `reconciliation_overrides`, and `audit_events`. Passwords use Argon2id; only SHA-256 hashes of random session tokens are stored. Cookies are HttpOnly, SameSite=Lax, and Secure in production. Deactivation revokes active sessions, and the final active admin cannot be demoted or deactivated.
+
+Override identity is derived from the authenticated session. The request cannot choose an arbitrary actor or submit a shared supervisor credential. Every login, logout, reconciliation creation, override, and user administration action emits a safe audit event.
+
+Production requires PostgreSQL, a 32+ character `APP_API_KEY`, explicit non-wildcard `CORS_ORIGINS`, and secure cookie configuration. Never put `OPENAI_API_KEY`, `APP_API_KEY`, database passwords, or other secrets in `NEXT_PUBLIC_*` variables.
+
 ## Extraction providers
 
-`EXTRACTION_PROVIDER` accepts:
+`EXTRACTION_PROVIDER` accepts `local`, `openai`, `paddle`, or `auto`. Local PDF extraction is the default safe development path. Provider configuration is shown only as a boolean in monitoring; secret values are never returned.
 
-| Value | Behavior |
-| --- | --- |
-| `local` | PDF text extraction only |
-| `openai` | Structured multimodal extraction through the OpenAI adapter |
-| `paddle` | Local PaddleOCR / PP-Structure extraction |
-| `auto` | Local extraction first, then a configured fallback if required fields are incomplete |
-
-Model-only critical fields are treated as uncalibrated evidence and do not qualify for automatic `CLEAR` until their confidence behavior has been validated on representative documents.
-
-## Safety model
-
-GateGuard is intentionally fail-closed around dispatch decisions:
-
-- required uploads must be distinct files;
-- file extension, MIME type, signature, size, PDF page count, and image dimensions are bounded;
-- critical text fields only auto-match on conservative normalized equivalence;
-- fuzzy similarity can request `REVIEW`, but does not silently convert a material difference into `CLEAR`;
-- line-item conflicts can produce `HOLD`;
-- supervisor overrides preserve the original system decision and append an audit event;
-- production configuration rejects SQLite, wildcard CORS, and missing service/override secrets.
-
-This system verifies **consistency between submitted documents**. It does not prove that the documents match the physical shipment or the authoritative order in a WMS/ERP. If `CLEAR` is used as a dispatch control, integrate a trusted order/shipment reference as an additional source of truth.
-
-## Tests
-
-```bash
-make test
-```
-
-Backend only:
+## Tests and validation
 
 ```bash
 cd backend
-uv run pytest
-uv run ruff check app tests
-uv run python ../evaluation/run.py
-```
+python -m pytest
+python -m ruff check app scripts tests
+python ../evaluation/run.py
+alembic upgrade head
 
-Frontend only:
-
-```bash
-cd frontend
+cd ../frontend
 npm test
 npm run lint
 npm run build
 ```
 
-The evaluation fixtures under `samples/` are deterministic regression cases. They are not an OCR/model accuracy benchmark.
+Compose files are `docker-compose.yml` for local SQLite and `docker-compose.prod.yml` for PostgreSQL plus a migration job. Docker Compose validation requires Docker to be installed.
 
-## API
+## Scope limitation
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/reconcile` | Reconcile three shipment documents |
-| `GET` | `/api/reconciliations/{id}` | Read a reconciliation result |
-| `POST` | `/api/reconciliations/{id}/override` | Record a supervisor override |
-| `GET` | `/api/runtime` | Read non-secret runtime configuration |
-| `GET` | `/healthz` | Process health |
-| `GET` | `/readyz` | Dependency/schema readiness |
-
-FastAPI's interactive API docs are available in development and disabled in production.
-
-## Production
-
-A PostgreSQL-based Compose example is included in `docker-compose.prod.yml`. Production deployment still requires a real ingress/authentication layer, TLS, shared rate limiting, backups, dependency lockfiles, and validation against representative shipment documents.
-
-See [`docs/deployment.md`](docs/deployment.md) for deployment requirements.
-
-## Repository layout
-
-```text
-backend/        FastAPI application, migrations, and tests
-frontend/       Next.js application and BFF routes
-docs/           Architecture and deployment notes
-evaluation/     Deterministic reconciliation evaluation
-samples/        Generated regression fixtures
-scripts/        Repository maintenance utilities
-```
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Security issues should follow [`SECURITY.md`](SECURITY.md).
+Historical investigation deliberately persists structured evidence and provenance, not raw shipment files. GateGuard verifies cross-document consistency; it does not prove physical contents or replace an authoritative WMS/ERP shipment reference.

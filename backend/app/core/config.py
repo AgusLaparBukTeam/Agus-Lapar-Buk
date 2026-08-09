@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     rate_limit_requests: int = 180
     rate_limit_window_seconds: int = 60
     app_api_key: str | None = None
-    supervisor_override_key: str | None = None
+    session_ttl_seconds: int = 8 * 60 * 60
+    cookie_secure: bool | None = None
+    app_version: str = "0.1.0"
 
     extraction_provider: Literal["auto", "local", "openai", "paddle"] = "auto"
     critical_confidence_threshold: float = 0.75
@@ -58,6 +60,7 @@ class Settings(BaseSettings):
         "rate_limit_requests",
         "rate_limit_window_seconds",
         "max_ai_concurrency",
+        "session_ttl_seconds",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
@@ -72,12 +75,6 @@ class Settings(BaseSettings):
 
         if not self.app_api_key or len(self.app_api_key) < 32:
             raise ValueError("APP_API_KEY must be set to at least 32 characters in production")
-        if not self.supervisor_override_key or len(self.supervisor_override_key) < 24:
-            raise ValueError(
-                "SUPERVISOR_OVERRIDE_KEY must be set to at least 24 characters in production"
-            )
-        if self.app_api_key == self.supervisor_override_key:
-            raise ValueError("APP_API_KEY and SUPERVISOR_OVERRIDE_KEY must be different secrets")
         if any(origin == "*" for origin in self.cors_origins):
             raise ValueError("Wildcard CORS origins are forbidden in production")
         if self.database_url.startswith("sqlite"):
@@ -86,6 +83,14 @@ class Settings(BaseSettings):
                 "Configure PostgreSQL for APP_ENV=production"
             )
         return self
+
+    @property
+    def secure_cookies(self) -> bool:
+        return (
+            self.cookie_secure
+            if self.cookie_secure is not None
+            else self.app_env.casefold() == "production"
+        )
 
 
 @lru_cache

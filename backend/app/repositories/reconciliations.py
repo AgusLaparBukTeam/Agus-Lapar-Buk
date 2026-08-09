@@ -3,12 +3,29 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, create_engine, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from app.core.errors import NotFoundError
-from app.domain.models import OverrideEvent, OverrideRequest, ReconciliationResult
+from app.core.errors import GateGuardError, NotFoundError
+from app.domain.models import (
+    OverrideEvent,
+    OverrideRequest,
+    ReconciliationResult,
+    ReconciliationStatus,
+)
 
 
 class Base(DeclarativeBase):
@@ -22,6 +39,10 @@ class ReconciliationRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     result_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    processing_ms: Mapped[int] = mapped_column(Integer, default=0)
+    shipment_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    overridden: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
 
 class OverrideRow(Base):
@@ -37,10 +58,79 @@ class OverrideRow(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     actor: Mapped[str] = mapped_column(String(120))
+    actor_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
     previous_decision: Mapped[str] = mapped_column(String(16))
     final_decision: Mapped[str] = mapped_column(String(16))
     reason: Mapped[str] = mapped_column(Text)
     corrected_fields_json: Mapped[str] = mapped_column(Text)
+
+
+class UserRow(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(16), index=True)
+    active: Mapped[bool] = mapped_column(default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SessionRow(Base):
+    __tablename__ = "sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuditEventRow(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    actor_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
+    actor_display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    entity_type: Mapped[str] = mapped_column(String(80), index=True)
+    entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    request_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+def user_dict(user: UserRow) -> dict[str, Any]:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": user.role,
+        "active": user.active,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "last_login_at": user.last_login_at,
+    }
+
+
+def as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _shipment_id(result: ReconciliationResult) -> str | None:
+    document = result.documents.get("delivery_order")
+    value = document.shipment_id.value if document else None
+    return str(value) if value is not None else None
 
 
 class ReconciliationRepository:
@@ -68,13 +158,275 @@ class ReconciliationRepository:
                     created_at=result.created_at,
                     updated_at=now,
                     result_json=result.model_dump_json(),
+                    status=result.status.value,
+                    processing_ms=result.processing_ms,
+                    shipment_id=_shipment_id(result),
                 )
                 session.add(row)
             else:
                 row.updated_at = now
                 row.result_json = result.model_dump_json()
+                row.status = result.status.value
+                row.processing_ms = result.processing_ms
+                row.shipment_id = _shipment_id(result)
             session.commit()
         return result
+
+    def record_audit(
+        self,
+        event_type: str,
+        entity_type: str,
+        *,
+        entity_id: str | None = None,
+        actor: UserRow | None = None,
+        metadata: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        with self.session_factory() as session:
+            session.add(
+                AuditEventRow(
+                    id=str(uuid.uuid4()),
+                    actor_user_id=actor.id if actor else None,
+                    actor_display_name=actor.display_name if actor else None,
+                    event_type=event_type,
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    metadata_json=json.dumps(metadata or {}, ensure_ascii=False, default=str),
+                    request_id=request_id,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+    def get_user_by_email(self, email: str) -> UserRow | None:
+        with self.session_factory() as session:
+            return session.scalar(select(UserRow).where(UserRow.email == email.strip().casefold()))
+
+    def get_user(self, user_id: str) -> UserRow | None:
+        with self.session_factory() as session:
+            return session.get(UserRow, user_id)
+
+    def create_user(
+        self, *, email: str, display_name: str, password_hash: str, role: str
+    ) -> UserRow:
+        now = datetime.now(UTC)
+        user = UserRow(
+            id=str(uuid.uuid4()),
+            email=email.strip().casefold(),
+            display_name=display_name.strip(),
+            password_hash=password_hash,
+            role=role,
+            active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        with self.session_factory() as session:
+            if session.scalar(select(UserRow).where(UserRow.email == user.email)):
+                raise GateGuardError(
+                    "A user with this email already exists.", code="CONFLICT", status_code=409
+                )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+            return user
+
+    def mark_login(self, user_id: str) -> None:
+        with self.session_factory() as session:
+            user = session.get(UserRow, user_id)
+            if user:
+                user.last_login_at = user.updated_at = datetime.now(UTC)
+                session.commit()
+
+    def create_session(self, *, token_hash: str, user_id: str, expires_at: datetime) -> None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            session.add(
+                SessionRow(
+                    token_hash=token_hash,
+                    user_id=user_id,
+                    created_at=now,
+                    expires_at=expires_at,
+                    last_seen_at=now,
+                )
+            )
+            session.commit()
+
+    def get_session_user(self, token_hash: str) -> UserRow | None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            row = session.scalar(select(SessionRow).where(SessionRow.token_hash == token_hash))
+            if row is None or row.revoked_at is not None or as_utc(row.expires_at) <= now:
+                return None
+            user = session.get(UserRow, row.user_id)
+            if user is None or not user.active:
+                return None
+            row.last_seen_at = now
+            session.commit()
+            return user
+
+    def revoke_session(self, token_hash: str) -> UserRow | None:
+        with self.session_factory() as session:
+            row = session.scalar(select(SessionRow).where(SessionRow.token_hash == token_hash))
+            user = session.get(UserRow, row.user_id) if row else None
+            if row and row.revoked_at is None:
+                row.revoked_at = datetime.now(UTC)
+                session.commit()
+            return user
+
+    def list_users(self) -> list[UserRow]:
+        with self.session_factory() as session:
+            return list(session.scalars(select(UserRow).order_by(UserRow.created_at.desc())))
+
+    def update_user(
+        self, user_id: str, *, role: str | None = None, active: bool | None = None
+    ) -> UserRow:
+        with self.session_factory() as session:
+            user = session.get(UserRow, user_id)
+            if user is None:
+                raise NotFoundError("User was not found.")
+            if active is False and user.role == "admin":
+                active_admins = (
+                    session.scalar(
+                        select(func.count(UserRow.id)).where(
+                            UserRow.role == "admin", UserRow.active.is_(True)
+                        )
+                    )
+                    or 0
+                )
+                if active_admins <= 1:
+                    raise GateGuardError(
+                        "The final active admin cannot be deactivated.",
+                        code="CONFLICT",
+                        status_code=409,
+                    )
+            if role and user.role == "admin" and role != "admin":
+                active_admins = (
+                    session.scalar(
+                        select(func.count(UserRow.id)).where(
+                            UserRow.role == "admin", UserRow.active.is_(True)
+                        )
+                    )
+                    or 0
+                )
+                if user.active and active_admins <= 1:
+                    raise GateGuardError(
+                        "The final active admin cannot lose admin role.",
+                        code="CONFLICT",
+                        status_code=409,
+                    )
+            if role is not None:
+                user.role = role
+            if active is not None:
+                user.active = active
+                if not active:
+                    session.query(SessionRow).filter(
+                        SessionRow.user_id == user_id, SessionRow.revoked_at.is_(None)
+                    ).update({"revoked_at": datetime.now(UTC)})
+            user.updated_at = datetime.now(UTC)
+            session.commit()
+            session.refresh(user)
+            return user
+
+    def list_reconciliations(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        overridden: bool | None = None,
+        query: str | None = None,
+    ) -> tuple[list[ReconciliationResult], int]:
+        with self.session_factory() as session:
+            filters = []
+            if status:
+                filters.append(
+                    or_(
+                        ReconciliationRow.status == status,
+                        ReconciliationRow.result_json.contains(f'"status":"{status}"'),
+                    )
+                )
+            if date_from:
+                filters.append(ReconciliationRow.created_at >= date_from)
+            if date_to:
+                filters.append(ReconciliationRow.created_at < date_to)
+            if query:
+                term = f"%{query.strip()}%"
+                filters.append(
+                    or_(ReconciliationRow.result_json.like(term), ReconciliationRow.id.like(term))
+                )
+            if overridden is True:
+                filters.append(
+                    or_(
+                        ReconciliationRow.overridden.is_(True),
+                        ReconciliationRow.id.in_(select(OverrideRow.reconciliation_id).distinct()),
+                    )
+                )
+            elif overridden is False:
+                filters.append(ReconciliationRow.overridden.is_(False))
+            stmt = (
+                select(ReconciliationRow)
+                .where(*filters)
+                .order_by(ReconciliationRow.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            rows = list(session.scalars(stmt))
+            total = session.scalar(select(func.count(ReconciliationRow.id)).where(*filters)) or 0
+            results = [
+                self._hydrate_overrides(
+                    session, ReconciliationResult.model_validate_json(row.result_json)
+                )
+                for row in rows
+            ]
+            return results, int(total)
+
+    def dashboard(self, start: datetime, end: datetime) -> dict[str, Any]:
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(ReconciliationRow)
+                    .where(
+                        ReconciliationRow.created_at >= start, ReconciliationRow.created_at < end
+                    )
+                    .order_by(ReconciliationRow.created_at.desc())
+                )
+            )
+            results = [
+                self._hydrate_overrides(
+                    session, ReconciliationResult.model_validate_json(row.result_json)
+                )
+                for row in rows
+            ]
+            counts = {
+                status: sum(r.effective_status == status for r in results)
+                for status in ReconciliationStatus
+            }
+            awaiting = sum(
+                r.effective_status in {ReconciliationStatus.REVIEW, ReconciliationStatus.HOLD}
+                and not r.audit.override_history
+                for r in results
+            )
+            processing = [r.processing_ms for r in results]
+            return {
+                "reconciliations_today": len(results),
+                "clear_today": counts[ReconciliationStatus.CLEAR],
+                "review_today": counts[ReconciliationStatus.REVIEW],
+                "hold_today": counts[ReconciliationStatus.HOLD],
+                "awaiting_review": awaiting,
+                "overridden": sum(bool(r.audit.override_history) for r in results),
+                "average_processing_ms": sum(processing) / len(processing) if processing else 0,
+                "recent": results[:8],
+            }
+
+    def list_audit(self, limit: int = 100) -> list[AuditEventRow]:
+        with self.session_factory() as session:
+            return list(
+                session.scalars(
+                    select(AuditEventRow).order_by(AuditEventRow.created_at.desc()).limit(limit)
+                )
+            )
 
     @staticmethod
     def _event_model(event: OverrideRow) -> OverrideEvent:
@@ -121,7 +473,13 @@ class ReconciliationRepository:
             result = ReconciliationResult.model_validate_json(row.result_json)
             return self._hydrate_overrides(session, result)
 
-    def override(self, session_id: str, request: OverrideRequest) -> ReconciliationResult:
+    def override(
+        self,
+        session_id: str,
+        request: OverrideRequest,
+        actor_user: UserRow | None = None,
+        request_id: str | None = None,
+    ) -> ReconciliationResult:
         event_id = str(uuid.uuid4())
         with self.session_factory() as session:
             # Serialize overrides per reconciliation on databases that support SELECT FOR UPDATE.
@@ -150,7 +508,8 @@ class ReconciliationRepository:
                     id=event_id,
                     reconciliation_id=session_id,
                     created_at=now,
-                    actor=request.actor,
+                    actor=actor_user.display_name if actor_user else (request.actor or "legacy"),
+                    actor_user_id=actor_user.id if actor_user else None,
                     previous_decision=str(previous),
                     final_decision=request.final_decision.value,
                     reason=request.reason.strip(),
@@ -168,10 +527,25 @@ class ReconciliationRepository:
             result.audit.override_reason = request.reason.strip()
             result.audit.corrected_fields = request.corrected_fields
             result.audit.overridden_at = now
-            result.audit.overridden_by = request.actor
+            result.audit.overridden_by = (
+                actor_user.display_name if actor_user else (request.actor or "legacy")
+            )
             result.audit.override_history = []  # Canonical history lives in append-only rows.
             row.updated_at = now
             row.result_json = result.model_dump_json()
+            row.overridden = True
             session.commit()
+
+        self.record_audit(
+            "reconciliation.override",
+            "reconciliation",
+            entity_id=session_id,
+            actor=actor_user,
+            metadata={
+                "previous_decision": str(previous),
+                "final_decision": request.final_decision.value,
+            },
+            request_id=request_id,
+        )
 
         return self.get(session_id)

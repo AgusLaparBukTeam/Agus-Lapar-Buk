@@ -1,9 +1,44 @@
+import os
+from pathlib import Path
+from uuid import uuid4
+
+os.environ["DATABASE_URL"] = (
+    f"sqlite:///{Path(os.getenv('TEMP', '.')) / f'gateguard-tests-{uuid4().hex}.db'}"
+)
+
+from app.auth.passwords import hash_password
+from app.core.config import get_settings
 from app.domain.models import DocumentField, DocumentType, ShipmentDocument, ShipmentItem
+from app.repositories.reconciliations import ReconciliationRepository
+
+TEST_EMAIL = "test-admin@gateguard.local"
+TEST_PASSWORD = "test-password-1234"
+
+
+def login(client):
+    response = client.post("/api/auth/login", json={"email": TEST_EMAIL, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
+    return client
+
+
+def pytest_configure():
+    repository = ReconciliationRepository(get_settings().database_url)
+    if repository.get_user_by_email(TEST_EMAIL) is None:
+        repository.create_user(
+            email=TEST_EMAIL,
+            display_name="Test Admin",
+            password_hash=hash_password(TEST_PASSWORD),
+            role="admin",
+        )
 
 
 def f(value, confidence=0.95):
-    return DocumentField(value=value, raw_value=str(value) if value is not None else None,
-                         confidence=confidence, source="test")
+    return DocumentField(
+        value=value,
+        raw_value=str(value) if value is not None else None,
+        confidence=confidence,
+        source="test",
+    )
 
 
 def make_doc(

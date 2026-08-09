@@ -1,0 +1,9 @@
+"use client";
+import { useQuery } from "@tanstack/react-query";
+import { fetchAudit } from "@/lib/api";
+export default function AuditPage() {
+  const { data, isPending, isError } = useQuery({ queryKey: ["audit"], queryFn: fetchAudit });
+  if (isPending) return <p className="py-12 text-sm text-[var(--subtle)]">Memuat audit trail…</p>;
+  if (isError || !data) return <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">Audit trail tidak tersedia atau akses ditolak.</div>;
+  return <div><p className="text-xs uppercase tracking-[0.16em] text-[var(--subtle)]">Immutable application events</p><h1 className="mt-2 text-2xl font-semibold">Audit trail</h1><p className="mt-1 text-sm text-[var(--subtle)]">Event identitas dan operasi penting yang dicatat server.</p><div className="mt-7 overflow-x-auto rounded-lg border border-[var(--border)] bg-white"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-[var(--muted)] text-xs text-[var(--subtle)]"><tr><th className="px-4 py-3">Waktu</th><th className="px-4 py-3">Event</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Entity</th><th className="px-4 py-3">Metadata</th></tr></thead><tbody>{data.map((event) => <tr key={event.id} className="border-t border-[var(--border)]"><td className="whitespace-nowrap px-4 py-3 text-xs text-[var(--subtle)]">{new Date(event.created_at).toLocaleString("id-ID")}</td><td className="px-4 py-3 font-medium">{event.event_type}</td><td className="px-4 py-3">{event.actor_display_name || "System"}</td><td className="px-4 py-3 text-xs">{event.entity_type}{event.entity_id ? ` · ${event.entity_id.slice(0, 8)}` : ""}</td><td className="max-w-xs truncate px-4 py-3 font-mono text-xs">{JSON.stringify(event.metadata)}</td></tr>)}</tbody></table></div></div>;
+}

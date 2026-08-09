@@ -37,8 +37,7 @@ class ReconciliationService:
             *(self.extractor.extract(upload, dtype) for dtype, upload in ordered)
         )
         documents = {
-            dtype: document
-            for (dtype, _), document in zip(ordered, extracted, strict=True)
+            dtype: document for (dtype, _), document in zip(ordered, extracted, strict=True)
         }
         status, reason, action, mismatches = reconcile(
             documents,

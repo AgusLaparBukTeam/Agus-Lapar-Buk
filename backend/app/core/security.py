@@ -10,7 +10,9 @@ from collections.abc import Awaitable, Callable
 from fastapi import Request
 from starlette.responses import JSONResponse, Response
 
+from app.auth.service import SESSION_COOKIE, user_from_token
 from app.core.config import Settings
+from app.repositories.reconciliations import ReconciliationRepository
 
 
 class RateLimiter:
@@ -50,6 +52,9 @@ def _error(status_code: int, code: str, message: str, request_id: str) -> JSONRe
 
 def install_security_middleware(app, settings: Settings) -> None:
     limiter = RateLimiter(settings.rate_limit_requests, settings.rate_limit_window_seconds)
+    repository = ReconciliationRepository(
+        settings.database_url, auto_create_schema=settings.app_env.casefold() != "production"
+    )
 
     @app.middleware("http")
     async def security_middleware(
@@ -63,6 +68,7 @@ def install_security_middleware(app, settings: Settings) -> None:
             else secrets.token_hex(12)
         )
         request.state.request_id = request_id
+        request.state.user = user_from_token(repository, request.cookies.get(SESSION_COOKIE))
 
         def secure(response: Response) -> Response:
             response.headers["X-Request-ID"] = request_id
@@ -93,20 +99,6 @@ def install_security_middleware(app, settings: Settings) -> None:
             if not secrets.compare_digest(supplied, settings.app_api_key):
                 return secure(
                     _error(401, "UNAUTHORIZED", "Missing or invalid API key.", request_id)
-                )
-
-        # The BFF's internal API key authenticates the service, not the human supervisor.
-        # A separate secret is therefore required for operational overrides.
-        if settings.supervisor_override_key and request.url.path.endswith("/override"):
-            supplied = request.headers.get("x-supervisor-key", "")
-            if not secrets.compare_digest(supplied, settings.supervisor_override_key):
-                return secure(
-                    _error(
-                        403,
-                        "SUPERVISOR_AUTH_REQUIRED",
-                        "A valid supervisor credential is required for overrides.",
-                        request_id,
-                    )
                 )
 
         response = await call_next(request)

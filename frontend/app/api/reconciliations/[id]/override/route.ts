@@ -16,16 +16,14 @@ export async function POST(
     );
   }
 
-  const supervisorKey = request.headers.get("x-supervisor-key") || "";
   try {
     const upstream = await backendFetch(`/api/reconciliations/${encodeURIComponent(id)}/override`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(supervisorKey ? { "X-Supervisor-Key": supervisorKey } : {}),
       },
       body,
-    });
+    }, request.headers.get("cookie"));
     return passthrough(upstream);
   } catch (err) {
     return backendFailure(err);

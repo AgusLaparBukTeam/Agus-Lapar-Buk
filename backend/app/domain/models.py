@@ -27,6 +27,12 @@ class ReconciliationStatus(StrEnum):
     HOLD = "HOLD"
 
 
+class UserRole(StrEnum):
+    OPERATOR = "operator"
+    SUPERVISOR = "supervisor"
+    ADMIN = "admin"
+
+
 class MismatchType(StrEnum):
     WRONG_RECIPIENT = "WRONG_RECIPIENT"
     WRONG_DESTINATION = "WRONG_DESTINATION"
@@ -145,12 +151,14 @@ class ReconciliationResult(BaseModel):
 class OverrideRequest(BaseModel):
     final_decision: ReconciliationStatus
     reason: str = Field(min_length=5, max_length=1000)
-    actor: str = Field(min_length=2, max_length=120)
+    actor: str | None = Field(default=None, min_length=2, max_length=120)
     corrected_fields: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("actor")
     @classmethod
-    def clean_actor(cls, value: str) -> str:
+    def clean_actor(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = " ".join(value.strip().split())
         if len(cleaned) < 2:
             raise ValueError("Supervisor identity is required")
@@ -164,3 +172,63 @@ class OverrideRequest(BaseModel):
         if len(encoded) > 16 * 1024:
             raise ValueError("corrected_fields exceeds the 16 KB audit limit")
         return self
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    role: UserRole
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+    last_login_at: datetime | None = None
+
+
+class UserCreateRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=2, max_length=120)
+    password: str = Field(min_length=1, max_length=256)
+    role: UserRole
+
+
+class UserUpdateRequest(BaseModel):
+    role: UserRole | None = None
+    active: bool | None = None
+
+
+class PaginatedReconciliations(BaseModel):
+    items: list[ReconciliationResult]
+    page: int
+    page_size: int
+    total: int
+
+
+class DashboardSummary(BaseModel):
+    date: str
+    reconciliations_today: int
+    clear_today: int
+    review_today: int
+    hold_today: int
+    awaiting_review: int
+    overridden: int
+    average_processing_ms: float
+    recent: list[ReconciliationResult]
+    readiness: dict[str, str]
+
+
+class AuditEventResponse(BaseModel):
+    id: str
+    actor_user_id: str | None
+    actor_display_name: str | None
+    event_type: str
+    entity_type: str
+    entity_id: str | None
+    metadata: dict[str, Any]
+    request_id: str | None
+    created_at: datetime

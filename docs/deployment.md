@@ -30,11 +30,12 @@ Start from `.env.production.example` and replace every placeholder. At minimum, 
 
 - `APP_PUBLIC_ORIGIN`
 - `APP_API_KEY`
-- `SUPERVISOR_OVERRIDE_KEY`
+- `SESSION_TTL_SECONDS`
+- `COOKIE_SECURE=true`
 - `POSTGRES_PASSWORD`
 - `DATABASE_URL`
 
-`APP_API_KEY` and `SUPERVISOR_OVERRIDE_KEY` must be independent secrets.
+`APP_API_KEY` is a server-to-server credential used only by the Next.js BFF. Human authentication uses database-backed users and opaque session cookies; there is no shared supervisor credential.
 
 If OpenAI extraction is enabled, `OPENAI_API_KEY` must remain server-side. Never expose provider keys through a `NEXT_PUBLIC_*` variable.
 
@@ -76,8 +77,11 @@ Review dependency changes before merging the generated lockfiles.
 Before exposing GateGuard outside a trusted development environment:
 
 - terminate TLS at a managed ingress or reverse proxy;
-- require authenticated user identity;
-- enforce authorization for supervisor override operations;
+- route the public browser boundary to the Next.js BFF;
+- keep the FastAPI service credential server-side;
+- run `alembic upgrade head` before the API;
+- bootstrap the first admin with `python backend/scripts/create_admin.py`;
+- enforce authorization for supervisor override operations through backend RBAC;
 - set request-body limits at the ingress as well as in the application;
 - use a shared rate limiter if multiple backend replicas are deployed;
 - keep FastAPI on a private network;

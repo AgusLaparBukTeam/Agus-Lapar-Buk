@@ -8,6 +8,8 @@ import { DocumentViewer } from "@/components/document-viewer/document-viewer";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { overrideDecision } from "@/lib/api";
+import { fetchMe } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 import type { DocumentType, Mismatch, ReconciliationResult, ReconciliationStatus } from "@/lib/types";
 
 const docLabels: Record<DocumentType, string> = {
@@ -39,6 +41,7 @@ export function ResultWorkspace({
   );
   const [overrideOpen, setOverrideOpen] = useState(false);
   const effectiveStatus = result.audit.final_decision || result.effective_status || result.status;
+  const { data: user } = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
 
   const evidence = useMemo(() =>
     selected?.evidence
@@ -65,9 +68,7 @@ export function ResultWorkspace({
           </div>
           <div className="flex shrink-0 gap-2">
             <Button variant="secondary" onClick={onReset}>Rekonsiliasi baru</Button>
-            <Button variant={effectiveStatus === "HOLD" ? "danger" : "primary"} onClick={() => setOverrideOpen(true)}>
-              Override supervisor
-            </Button>
+            {(user?.role === "supervisor" || user?.role === "admin") && <Button variant={effectiveStatus === "HOLD" ? "danger" : "primary"} onClick={() => setOverrideOpen(true)}>Override supervisor</Button>}
           </div>
         </div>
       </header>
@@ -196,14 +197,11 @@ function OverrideDialog({
   onSaved: (result: ReconciliationResult) => void;
 }) {
   const [decision, setDecision] = useState<ReconciliationStatus>(systemDecision);
-  const [actor, setActor] = useState("");
-  const [supervisorKey, setSupervisorKey] = useState("");
   const [reason, setReason] = useState("");
   const mutation = useMutation({
     mutationFn: () => overrideDecision(
       sessionId,
-      { final_decision: decision, reason, actor },
-      supervisorKey,
+      { final_decision: decision, reason },
     ),
     onSuccess: (data) => { toast.success("Override tersimpan"); onSaved(data); },
     onError: (error: Error) => toast.error(error.message),
@@ -219,28 +217,7 @@ function OverrideDialog({
             <p className="mt-1 text-xs text-[var(--subtle)]">Keputusan sistem asli akan tetap disimpan untuk audit.</p>
           </div>
         </div>
-        <label className="mt-4 block text-xs font-medium">
-          Identitas supervisor
-          <input
-            value={actor}
-            onChange={(e) => setActor(e.target.value)}
-            maxLength={120}
-            autoComplete="name"
-            placeholder="Nama / ID supervisor"
-            className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-white px-2"
-          />
-        </label>
-        <label className="mt-3 block text-xs font-medium">
-          Credential supervisor
-          <input
-            type="password"
-            value={supervisorKey}
-            onChange={(e) => setSupervisorKey(e.target.value)}
-            autoComplete="off"
-            placeholder="Supervisor override key"
-            className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-white px-2"
-          />
-        </label>
+        <p className="mt-4 rounded-md bg-blue-50 p-3 text-xs text-blue-900">Identity override diambil dari akun supervisor yang sedang login dan dicatat otomatis.</p>
         <label className="mt-3 block text-xs font-medium">
           Keputusan akhir
           <select value={decision} onChange={(e) => setDecision(e.target.value as ReconciliationStatus)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-white px-2">
@@ -264,7 +241,7 @@ function OverrideDialog({
           <Button variant="secondary" onClick={onClose}>Batal</Button>
           <Button
             onClick={() => mutation.mutate()}
-            disabled={actor.trim().length < 2 || reason.trim().length < 5 || mutation.isPending}
+            disabled={reason.trim().length < 5 || mutation.isPending}
           >
             {mutation.isPending ? "Menyimpan…" : "Simpan override"}
           </Button>

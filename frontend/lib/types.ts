@@ -1,6 +1,18 @@
 export type DocumentType = "invoice" | "packing_list" | "delivery_order";
 export type ReconciliationStatus = "CLEAR" | "REVIEW" | "HOLD";
 export type Severity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type UserRole = "operator" | "supervisor" | "admin";
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: UserRole;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string | null;
+}
 
 export interface EvidenceRegion {
   page: number; x: number; y: number; width: number; height: number; text?: string | null;
@@ -81,4 +93,39 @@ export interface ReconciliationResult {
   mismatches: Mismatch[];
   audit: AuditState;
   processing_ms: number;
+}
+
+export interface HistoryResponse { items: ReconciliationResult[]; page: number; page_size: number; total: number; }
+export interface DashboardSummary {
+  date: string;
+  reconciliations_today: number;
+  clear_today: number;
+  review_today: number;
+  hold_today: number;
+  awaiting_review: number;
+  overridden: number;
+  average_processing_ms: number;
+  recent: ReconciliationResult[];
+  readiness: Record<string, string>;
+}
+export interface AuditEvent {
+  id: string;
+  actor_user_id?: string | null;
+  actor_display_name?: string | null;
+  event_type: string;
+  entity_type: string;
+  entity_id?: string | null;
+  metadata: Record<string, unknown>;
+  request_id?: string | null;
+  created_at: string;
+}
+export interface MonitoringSummary {
+  application: string;
+  database: string;
+  environment: string;
+  version: string;
+  extraction_provider: string;
+  provider_configured: boolean;
+  limits: { max_upload_bytes: number; max_pdf_pages: number };
+  volume: Record<string, unknown>;
 }

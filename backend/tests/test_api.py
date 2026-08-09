@@ -1,5 +1,6 @@
 import io
 
+from conftest import login
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -15,6 +16,7 @@ def test_health_and_security_headers():
 
 
 def test_reconcile_rejects_unsupported_file():
+    login(client)
     files = {
         "invoice": ("invoice.txt", io.BytesIO(b"hello"), "text/plain"),
         "packing_list": ("packing.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf"),
@@ -27,6 +29,7 @@ def test_reconcile_rejects_unsupported_file():
 
 
 def test_override_reason_validation():
+    login(client)
     response = client.post(
         "/api/reconciliations/does-not-exist/override",
         json={"final_decision": "CLEAR", "reason": "x", "corrected_fields": {}},

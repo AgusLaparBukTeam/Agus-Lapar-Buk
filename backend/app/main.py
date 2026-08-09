@@ -24,8 +24,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
 )
 
@@ -57,8 +57,7 @@ async def validation_error(request: Request, exc: RequestValidationError):
                 "message": "The request did not match the API contract.",
                 "request_id": getattr(request.state, "request_id", None),
                 "details": [
-                    {"location": list(err["loc"]), "message": err["msg"]}
-                    for err in exc.errors()
+                    {"location": list(err["loc"]), "message": err["msg"]} for err in exc.errors()
                 ],
             }
         },

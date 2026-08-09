@@ -16,6 +16,7 @@ dependencies = [
   "pillow>=11,<13",
   "psycopg[binary]>=3.2,<4",
   "alembic>=1.18,<2",
+  "argon2-cffi>=25.1,<26",
 ]
 
 [project.optional-dependencies]

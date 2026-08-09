@@ -1,0 +1,8 @@
+import { backendFailure, backendFetch, passthrough } from "@/lib/backend-proxy";
+
+export const runtime = "nodejs";
+
+export async function GET(request: Request) {
+  try { return passthrough(await backendFetch(`/api/reconciliations${new URL(request.url).search}`, undefined, request.headers.get("cookie"))); }
+  catch (error) { return backendFailure(error); }
+}

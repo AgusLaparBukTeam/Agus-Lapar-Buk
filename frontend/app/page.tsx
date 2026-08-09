@@ -1,5 +1,5 @@
-import { UploadWorkspace } from "@/components/reconciliation/upload-workspace";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return <UploadWorkspace />;
+  redirect("/dashboard");
 }

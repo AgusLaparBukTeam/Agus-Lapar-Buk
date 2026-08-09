@@ -31,8 +31,12 @@ MAX_ABS_NUMERIC = Decimal("1e24")
 
 
 def field(value: Any, raw: str | None = None, confidence: float = 0.0, source: str = "parser"):
-    return DocumentField(value=value, raw_value=raw or (str(value) if value is not None else None),
-                         confidence=confidence, source=source)
+    return DocumentField(
+        value=value,
+        raw_value=raw or (str(value) if value is not None else None),
+        confidence=confidence,
+        source=source,
+    )
 
 
 class Extractor(ABC):
@@ -151,7 +155,6 @@ ITEM_LINE = re.compile(
 )
 
 
-
 TABLE_FOOTER = re.compile(
     r"^(?:grand\s*total|document\s*total|invoice\s*total|total\s*amount|"
     r"total\s*nilai|nilai\s*total|total\s*harga|total\s*tagihan|"
@@ -212,10 +215,18 @@ def parse_shipment_text(text: str, document_type: DocumentType, filename: str) -
                     sku=field(sku, confidence=0.96, source="local_pdf_text"),
                     description=field(desc, confidence=0.92, source="local_pdf_text"),
                     quantity=field(_number(qty), qty, 0.96, "local_pdf_text"),
-                    unit_price=field(_number(unit_price), unit_price, 0.90 if unit_price else 0.0,
-                                     "local_pdf_text"),
-                    line_total=field(_number(line_total), line_total, 0.90 if line_total else 0.0,
-                                    "local_pdf_text"),
+                    unit_price=field(
+                        _number(unit_price),
+                        unit_price,
+                        0.90 if unit_price else 0.0,
+                        "local_pdf_text",
+                    ),
+                    line_total=field(
+                        _number(line_total),
+                        line_total,
+                        0.90 if line_total else 0.0,
+                        "local_pdf_text",
+                    ),
                 )
             )
         elif in_items and TABLE_FOOTER.match(normalized):
@@ -280,8 +291,14 @@ OPENAI_SCHEMA: dict[str, Any] = {
         },
     },
     "required": [
-        "detected_document_type", "document_id", "shipment_id", "sender", "recipient",
-        "destination", "document_total", "items"
+        "detected_document_type",
+        "document_id",
+        "shipment_id",
+        "sender",
+        "recipient",
+        "destination",
+        "document_total",
+        "items",
     ],
     "additionalProperties": False,
 }
@@ -355,10 +372,13 @@ class OpenAIExtractor(Extractor):
             "Content-Type": "application/json",
         }
         try:
-            async with self._semaphore, httpx.AsyncClient(
-                timeout=self.settings.openai_timeout_seconds,
-                follow_redirects=False,
-            ) as client:
+            async with (
+                self._semaphore,
+                httpx.AsyncClient(
+                    timeout=self.settings.openai_timeout_seconds,
+                    follow_redirects=False,
+                ) as client,
+            ):
                 response = await client.post(
                     self.settings.openai_base_url.rstrip("/") + "/responses",
                     headers=headers,
@@ -388,8 +408,12 @@ class OpenAIExtractor(Extractor):
 
         def llm_field(name: str) -> DocumentField:
             value = data.get(name)
-            return field(value, str(value) if value is not None else None,
-                         0.65 if value is not None else 0.0, "openai_structured_heuristic")
+            return field(
+                value,
+                str(value) if value is not None else None,
+                0.65 if value is not None else 0.0,
+                "openai_structured_heuristic",
+            )
 
         raw_items = data.get("items")
         if not isinstance(raw_items, list):
@@ -402,20 +426,31 @@ class OpenAIExtractor(Extractor):
                 raise ProviderError("The AI provider returned an invalid line item.")
             items.append(
                 ShipmentItem(
-                    sku=field(item.get("sku"), confidence=0.65 if item.get("sku") else 0.0,
-                              source="openai_structured_heuristic"),
-                    description=field(item.get("description"),
-                                      confidence=0.65 if item.get("description") else 0.0,
-                                      source="openai_structured_heuristic"),
-                    quantity=field(item.get("quantity"),
-                                   confidence=0.65 if item.get("quantity") is not None else 0.0,
-                                   source="openai_structured_heuristic"),
-                    unit_price=field(item.get("unit_price"),
-                                     confidence=0.65 if item.get("unit_price") is not None else 0.0,
-                                     source="openai_structured_heuristic"),
-                    line_total=field(item.get("line_total"),
-                                     confidence=0.65 if item.get("line_total") is not None else 0.0,
-                                     source="openai_structured_heuristic"),
+                    sku=field(
+                        item.get("sku"),
+                        confidence=0.65 if item.get("sku") else 0.0,
+                        source="openai_structured_heuristic",
+                    ),
+                    description=field(
+                        item.get("description"),
+                        confidence=0.65 if item.get("description") else 0.0,
+                        source="openai_structured_heuristic",
+                    ),
+                    quantity=field(
+                        item.get("quantity"),
+                        confidence=0.65 if item.get("quantity") is not None else 0.0,
+                        source="openai_structured_heuristic",
+                    ),
+                    unit_price=field(
+                        item.get("unit_price"),
+                        confidence=0.65 if item.get("unit_price") is not None else 0.0,
+                        source="openai_structured_heuristic",
+                    ),
+                    line_total=field(
+                        item.get("line_total"),
+                        confidence=0.65 if item.get("line_total") is not None else 0.0,
+                        source="openai_structured_heuristic",
+                    ),
                 )
             )
 
@@ -449,8 +484,6 @@ def _response_output_text(body: dict[str, Any]) -> str:
                 if content.get("type") == "output_text":
                     return str(content.get("text", ""))
     raise ProviderError("The AI provider returned no structured output.")
-
-
 
 
 def _paddle_text(payload: Any) -> str:
@@ -507,7 +540,12 @@ def _mark_uncalibrated_model_evidence(
 ) -> ShipmentDocument:
     """Model/OCR self-scores are not treated as calibrated operational probabilities."""
     for name in (
-        "document_id", "shipment_id", "sender", "recipient", "destination", "document_total"
+        "document_id",
+        "shipment_id",
+        "sender",
+        "recipient",
+        "destination",
+        "document_total",
     ):
         value = getattr(doc, name)
         if value.value is not None:
