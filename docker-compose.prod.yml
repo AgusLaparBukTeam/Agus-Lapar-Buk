@@ -43,7 +43,7 @@ services:
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql+psycopg://gateguard:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/gateguard
-    command: ["python", "scripts/seed_users.py"]
+    command: ["python", "-m", "scripts.seed_users"]
     depends_on:
       migrate:
         condition: service_completed_successfully
