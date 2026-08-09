@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, ChevronDown, ShieldCheck } from "lucide-react";
+import { CaretDown, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -144,7 +144,7 @@ export function ResultWorkspace({
               )}
               <details className="border-t border-[var(--border)]">
                 <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-xs font-medium">
-                  Provenance & detail teknis <ChevronDown size={14} />
+                  Provenance & detail teknis <CaretDown size={14} />
                 </summary>
                 <div className="space-y-2 px-3 pb-3 text-xs text-[var(--subtle)]">
                   {selected.evidence.map((ev, i) => (
@@ -211,7 +211,7 @@ function OverrideDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="presentation">
       <div role="dialog" aria-modal="true" aria-labelledby="override-title" className="w-full max-w-md rounded-lg border border-[var(--border)] bg-white p-4 shadow-xl">
         <div className="flex items-start gap-3">
-          <AlertCircle className="mt-0.5 text-amber-700" size={20} />
+          <WarningCircle className="mt-0.5 text-amber-700" size={20} />
           <div>
             <h2 id="override-title" className="font-semibold">Override keputusan sistem</h2>
             <p className="mt-1 text-xs text-[var(--subtle)]">Keputusan sistem asli akan tetap disimpan untuk audit.</p>

@@ -1,8 +1,8 @@
-import { AlertTriangle, CheckCircle2, OctagonAlert } from "lucide-react";
+import { CheckCircle, Warning, WarningOctagon } from "@phosphor-icons/react";
 import type { ReconciliationStatus } from "@/lib/types";
 
 export function StatusBadge({ status }: { status: ReconciliationStatus }) {
-  const Icon = status === "CLEAR" ? CheckCircle2 : status === "REVIEW" ? AlertTriangle : OctagonAlert;
+  const Icon = status === "CLEAR" ? CheckCircle : status === "REVIEW" ? Warning : WarningOctagon;
   const styles = status === "CLEAR"
     ? "border-green-200 bg-green-50 text-green-800"
     : status === "REVIEW"

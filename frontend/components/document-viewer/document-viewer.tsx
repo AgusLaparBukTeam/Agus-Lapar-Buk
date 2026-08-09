@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, ZoomIn, ZoomOut } from "lucide-react";
+import { FileText, MagnifyingGlassMinus, MagnifyingGlassPlus } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DocumentType, EvidenceRegion } from "@/lib/types";
@@ -47,9 +47,9 @@ export function DocumentViewer({
           ))}
         </div>
         <div className="flex gap-1">
-          <Button variant="ghost" aria-label="Perkecil" onClick={() => setZoom((z) => Math.max(.75, z - .25))}><ZoomOut size={15} /></Button>
+          <Button variant="ghost" aria-label="Perkecil" onClick={() => setZoom((z) => Math.max(.75, z - .25))}><MagnifyingGlassMinus size={15} /></Button>
           <span className="flex min-w-12 items-center justify-center text-xs text-[var(--subtle)]">{Math.round(zoom * 100)}%</span>
-          <Button variant="ghost" aria-label="Perbesar" onClick={() => setZoom((z) => Math.min(2, z + .25))}><ZoomIn size={15} /></Button>
+          <Button variant="ghost" aria-label="Perbesar" onClick={() => setZoom((z) => Math.min(2, z + .25))}><MagnifyingGlassPlus size={15} /></Button>
         </div>
       </div>
       <div className="relative flex-1 overflow-auto bg-neutral-100 p-3">

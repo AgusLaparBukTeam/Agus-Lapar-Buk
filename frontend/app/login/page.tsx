@@ -1,6 +1,6 @@
 "use client";
 
-import { Apple, ArrowUpRight, Chrome, Eye, EyeOff, Github, Globe2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { AppleLogo, ArrowUpRight, Eye, EyeSlash, GithubLogo, Globe, GoogleChromeLogo, LockKey, ShieldCheck } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -54,7 +54,7 @@ export default function LoginPage() {
       <section className="auth-form-pane" aria-label="GateGuard sign in">
         <header className="auth-header">
           <GateLogo />
-          <span className="auth-header__secure"><LockKeyhole size={14} /> Secure access</span>
+          <span className="auth-header__secure"><LockKey size={14} /> Secure access</span>
         </header>
 
         <div className="auth-form-wrap">
@@ -63,11 +63,11 @@ export default function LoginPage() {
           <p className="auth-intro">Keep every shipment decision accountable from one secure workspace.</p>
 
           <div className="auth-provider-grid" aria-label="Other sign-in methods">
-            <Button type="button" variant="secondary" className="auth-provider" disabled title="OAuth belum dikonfigurasi"><Chrome size={17} /> Google</Button>
-            <Button type="button" variant="secondary" className="auth-provider" disabled title="OAuth belum dikonfigurasi"><Apple size={17} /> Apple</Button>
-            <Button type="button" variant="secondary" className="auth-provider" disabled title="OAuth belum dikonfigurasi"><Github size={17} /> GitHub</Button>
+            <Button type="button" variant="secondary" className="auth-provider" disabled title="OAuth belum dikonfigurasi"><GoogleChromeLogo size={17} /> Google</Button>
+            <Button type="button" variant="secondary" className="auth-provider" disabled title="OAuth belum dikonfigurasi"><AppleLogo size={17} /> Apple</Button>
+            <Button type="button" variant="secondary" className="auth-provider" disabled title="OAuth belum dikonfigurasi"><GithubLogo size={17} /> GitHub</Button>
           </div>
-          <Button type="button" variant="secondary" className="auth-sso" disabled title="SSO belum dikonfigurasi"><LockKeyhole size={16} /> Continue with SSO</Button>
+          <Button type="button" variant="secondary" className="auth-sso" disabled title="SSO belum dikonfigurasi"><LockKey size={16} /> Continue with SSO</Button>
 
           <div className="auth-divider"><span>or continue with email</span></div>
 
@@ -84,7 +84,7 @@ export default function LoginPage() {
               <div className="auth-password">
                 <input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="Enter your password" required />
                 <button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}>
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}
                 </button>
               </div>
             </label>
@@ -106,7 +106,7 @@ export default function LoginPage() {
       </section>
 
       <section className="auth-promo" aria-label="GateGuard operations message">
-        <div className="auth-promo__top"><GateLogo compact /><div className="auth-promo__meta"><span><Globe2 size={14} /> English</span><span className="auth-promo__dot" /> Internal workspace</div></div>
+        <div className="auth-promo__top"><GateLogo compact /><div className="auth-promo__meta"><span><Globe size={14} /> English</span><span className="auth-promo__dot" /> Internal workspace <Button type="button" variant="secondary" className="auth-promo__signup" disabled title="Account access dikelola administrator">Sign up</Button></div></div>
         <div className="pixel-globe" aria-hidden="true" />
         <div className="auth-promo__copy">
           <div className="auth-promo__eyebrow">GateGuard operations · 2026</div>

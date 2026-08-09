@@ -1,19 +1,35 @@
 "use client";
 
-import { Activity, FileCheck2, History, LayoutDashboard, LogOut, ScrollText, Settings, ShieldCheck, Users } from "lucide-react";
+import {
+  CaretRight,
+  ClockCounterClockwise,
+  FileText,
+  Gear,
+  House,
+  ListChecks,
+  MagnifyingGlass,
+  Pulse,
+  Question,
+  SignOut,
+  SidebarSimple,
+  ShieldCheck,
+  Users,
+} from "@phosphor-icons/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { fetchMe, logout } from "@/lib/api";
 import type { UserRole } from "@/lib/types";
 
 const nav = [
-  ["/dashboard", "Dashboard", LayoutDashboard, "operator"],
-  ["/reconcile", "Rekonsiliasi", FileCheck2, "operator"],
-  ["/history", "History", History, "operator"],
-  ["/monitoring", "Monitoring", Activity, "operator"],
-  ["/audit", "Audit trail", ScrollText, "supervisor"],
-  ["/settings", "Settings", Settings, "admin"],
+  ["/dashboard", "Overview", House, "operator"],
+  ["/reconcile", "Reconcile", FileText, "operator"],
+  ["/history", "History", ClockCounterClockwise, "operator"],
+  ["/monitoring", "Monitoring", Pulse, "operator"],
+  ["/audit", "Audit trail", ListChecks, "supervisor"],
+  ["/settings", "Settings", Gear, "admin"],
 ] as const;
 
 function canSee(role: UserRole, minimum: string) {
@@ -21,11 +37,29 @@ function canSee(role: UserRole, minimum: string) {
   return levels[role] >= (levels[minimum as UserRole] || 1);
 }
 
+function activeLabel(pathname: string) {
+  const match = nav.find(([href]) => pathname === href || pathname.startsWith(`${href}/`));
+  return match?.[1] || "Overview";
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const client = useQueryClient();
   const { data: user } = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    setCollapsed(window.localStorage.getItem("gateguard.sidebar.collapsed") === "true");
+  }, []);
+
+  function toggleSidebar() {
+    setCollapsed((value) => {
+      const next = !value;
+      window.localStorage.setItem("gateguard.sidebar.collapsed", String(next));
+      return next;
+    });
+  }
 
   async function signOut() {
     await logout();
@@ -35,31 +69,91 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
   return (
-    <div className="min-h-screen lg:flex">
-      <aside className="border-b border-[var(--border)] bg-[#20130b] text-white lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col lg:border-b-0 lg:border-r lg:border-white/10">
-        <div className="flex items-center gap-3 px-5 py-5">
-          <span className="grid h-9 w-9 place-items-center rounded-md bg-[var(--accent)] text-white"><ShieldCheck size={20} /></span>
-          <div><div className="font-semibold tracking-tight">GateGuard</div><div className="text-[11px] text-white/60">Operations console</div></div>
+    <div className="console-shell" data-sidebar-collapsed={collapsed}>
+      <aside className="console-sidebar">
+        <div className="console-sidebar__brand">
+          <span className="console-brand-mark"><ShieldCheck size={20} weight="bold" /></span>
+          <span className="console-brand-name">GateGuard</span>
+          <Button
+            variant="ghost"
+            shape="square"
+            size="base"
+            icon={SidebarSimple}
+            aria-label={collapsed ? "Open sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Open sidebar" : "Collapse sidebar"}
+            className="console-sidebar__toggle"
+            onClick={toggleSidebar}
+          />
         </div>
-        <nav className="flex gap-1 overflow-x-auto px-3 pb-3 lg:block lg:flex-1 lg:overflow-visible lg:py-4" aria-label="Navigasi aplikasi">
+
+        <div className="console-sidebar__context">
+          <span className="console-context-dot" />
+          <span className="console-context-name">Operations workspace</span>
+          <CaretRight size={14} className="console-context-arrow" />
+        </div>
+
+        <nav className="console-sidebar__nav" aria-label="GateGuard navigation">
+          <div className="console-sidebar__label">Workspace</div>
           {nav.filter(([, , , minimum]) => canSee(user.role, minimum)).map(([href, label, Icon]) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
-            return <Link key={href} href={href} className={`flex shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors lg:mb-1 ${active ? "bg-white/12 text-white" : "text-white/65 hover:bg-white/8 hover:text-white"}`}><Icon size={17} />{label}</Link>;
+            return (
+              <Link
+                key={href}
+                href={href}
+                className={`console-nav-link ${active ? "is-active" : ""}`}
+                title={collapsed ? label : undefined}
+                aria-current={active ? "page" : undefined}
+              >
+                <Icon size={18} weight={active ? "fill" : "regular"} />
+                <span>{label}</span>
+                {active && <span className="console-nav-link__active" />}
+              </Link>
+            );
           })}
-          {user.role === "admin" && <Link href="/settings/users" className={`flex shrink-0 items-center gap-3 rounded-md px-3 py-2.5 text-sm lg:mb-1 ${pathname.startsWith("/settings/users") ? "bg-white/12 text-white" : "text-white/65 hover:bg-white/8 hover:text-white"}`}><Users size={17} />Users</Link>}
+          {user.role === "admin" && (
+            <Link
+              href="/settings/users"
+              className={`console-nav-link ${pathname.startsWith("/settings/users") ? "is-active" : ""}`}
+              title={collapsed ? "Users" : undefined}
+            >
+              <Users size={18} />
+              <span>Users</span>
+            </Link>
+          )}
         </nav>
-        <div className="hidden border-t border-white/10 p-4 lg:block">
-          <div className="truncate text-sm font-medium">{user.display_name}</div>
-          <div className="mt-0.5 text-xs capitalize text-white/55">{user.role}</div>
-          <button onClick={signOut} className="mt-4 flex items-center gap-2 text-xs text-white/65 hover:text-white"><LogOut size={14} />Keluar</button>
+
+        <div className="console-sidebar__footer">
+          <div className="console-user-avatar">{user.display_name.slice(0, 1).toUpperCase()}</div>
+          <div className="console-user-copy">
+            <div className="console-user-name">{user.display_name}</div>
+            <div className="console-user-role">{user.role}</div>
+          </div>
+          <Button variant="ghost" shape="square" size="sm" icon={SignOut} aria-label="Sign out" title="Sign out" onClick={signOut} />
         </div>
       </aside>
-      <div className="min-w-0 flex-1 lg:ml-64">
-        <header className="flex items-center justify-between border-b border-[var(--border)] bg-white px-4 py-3 lg:px-8">
-          <div><div className="text-xs uppercase tracking-[0.16em] text-[var(--subtle)]">Internal operations</div><div className="mt-0.5 text-sm font-semibold">Shipment document assurance</div></div>
-          <div className="flex items-center gap-3 text-right"><div className="hidden sm:block"><div className="text-sm font-medium">{user.display_name}</div><div className="text-xs capitalize text-[var(--subtle)]">{user.role}</div></div><button onClick={signOut} aria-label="Keluar" className="rounded-md border border-[var(--border)] p-2 text-[var(--subtle)] hover:text-[var(--text)] lg:hidden"><LogOut size={16} /></button></div>
+
+      <div className="console-main">
+        <header className="console-topbar">
+          <div className="console-topbar__left">
+            <Button
+              variant="ghost"
+              shape="square"
+              size="base"
+              icon={SidebarSimple}
+              aria-label={collapsed ? "Open sidebar" : "Collapse sidebar"}
+              title={collapsed ? "Open sidebar" : "Collapse sidebar"}
+              className="console-mobile-toggle"
+              onClick={toggleSidebar}
+            />
+            <div className="console-breadcrumb"><span>GateGuard</span><CaretRight size={14} /><strong>{activeLabel(pathname)}</strong></div>
+          </div>
+          <div className="console-topbar__actions">
+            <button type="button" className="console-search" aria-label="Quick search"><MagnifyingGlass size={16} /><span>Quick search</span><kbd>/</kbd></button>
+            <Button variant="ghost" shape="square" size="base" icon={Question} aria-label="Help" title="Help" />
+            <div className="console-topbar__account"><span className="console-user-avatar console-user-avatar--small">{user.display_name.slice(0, 1).toUpperCase()}</span><span>{user.display_name}</span></div>
+          </div>
         </header>
-        <main className="mx-auto max-w-[1440px] p-4 lg:p-8">{children}</main>
+        <main className="console-content">{children}</main>
       </div>
     </div>
   );

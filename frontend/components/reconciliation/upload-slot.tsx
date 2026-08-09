@@ -1,6 +1,6 @@
 "use client";
 
-import { FileCheck2, FileUp, X } from "lucide-react";
+import { File, FileArrowUp, X } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { validateFile } from "@/lib/validation";
@@ -48,7 +48,7 @@ export function UploadSlot({
           <h2 className="text-sm font-semibold">{label}</h2>
           <p className="mt-1 text-xs text-[var(--subtle)]">{hint}</p>
         </div>
-        {file ? <FileCheck2 size={18} className="text-green-700" aria-hidden /> : <FileUp size={18} className="text-[var(--subtle)]" aria-hidden />}
+        {file ? <File size={18} className="text-green-700" aria-hidden /> : <FileArrowUp size={18} className="text-[var(--subtle)]" aria-hidden />}
       </div>
 
       {file ? (

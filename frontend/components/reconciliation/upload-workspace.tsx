@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, ShieldCheck } from "lucide-react";
+import { ShieldCheck, SpinnerGap } from "@phosphor-icons/react";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -71,7 +71,7 @@ export function UploadWorkspace() {
             <div className="mt-0.5 text-xs text-[var(--subtle)]">Validasi file → ekstraksi → normalisasi → pemeriksaan konsistensi.</div>
           </div>
           <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()} className="min-w-44">
-            {mutation.isPending ? <><Loader2 size={15} className="animate-spin" /> Memproses dokumen…</> : "Periksa dokumen"}
+            {mutation.isPending ? <><SpinnerGap size={15} className="animate-spin" /> Memproses dokumen…</> : "Periksa dokumen"}
           </Button>
         </section>
 
