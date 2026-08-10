@@ -4,6 +4,7 @@ import {
   Archive,
   CaretDown,
   CaretRight,
+  ChartLine,
   ClockCounterClockwise,
   FileText,
   Gear,
@@ -11,7 +12,6 @@ import {
   ListChecks,
   MagnifyingGlass,
   Package,
-  Pulse,
   SignOut,
   SidebarSimple,
   ShieldCheck,
@@ -31,27 +31,27 @@ const SIDEBAR_CHANGE_EVENT = "gateguard.sidebar.change";
 const groups = [
   {
     label: "Home",
-    items: [["/dashboard", "Overview", House, "operator"]],
+    items: [["/dashboard", "Overview", House, "operator", "home summary attention"]],
   },
   {
     label: "Operations",
     items: [
-      ["/work-queue", "Work queue", ListChecks, "operator"],
-      ["/shipments", "Shipments", Package, "operator"],
-      ["/reconcile", "Document checks", FileText, "operator"],
-      ["/history", "Recent checks", ClockCounterClockwise, "operator"],
+      ["/work-queue", "Work queue", ListChecks, "operator", "open checks exceptions review"],
+      ["/shipments", "Shipments", Package, "operator", "shipment cases references routes"],
+      ["/reconcile", "Document checks", FileText, "operator", "invoice packing list delivery order compare"],
+      ["/history", "Recent checks", ClockCounterClockwise, "operator", "previous checks evidence"],
     ],
   },
   {
     label: "Observe",
     items: [
-      ["/monitoring", "Service status", Pulse, "operator"],
-      ["/audit", "Activity log", Archive, "supervisor"],
+      ["/monitoring", "Decision insights", ChartLine, "operator", "review release decisions trends"],
+      ["/audit", "Activity log", Archive, "supervisor", "record history access changes"],
     ],
   },
   {
     label: "Manage",
-    items: [["/settings", "Workspace settings", Gear, "operator"]],
+    items: [["/settings", "Workspace settings", Gear, "operator", "access review rules people"]],
   },
 ] as const;
 
@@ -92,10 +92,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [search, setSearch] = useState("");
 
   const items = useMemo(
-    () => groups.flatMap((group) => group.items.map(([href, label, Icon, minimum]) => ({ href, label, Icon, minimum, group: group.label }))),
+    () => groups.flatMap((group) => group.items.map(([href, label, Icon, minimum, keywords]) => ({ href, label, Icon, minimum, keywords, group: group.label }))),
     [],
   );
-  const results = items.filter((item) => item.label.toLowerCase().includes(search.trim().toLowerCase()));
+  const query = search.trim().toLowerCase();
+  const results = items.filter((item) => [item.label, item.group, item.keywords].join(" ").toLowerCase().includes(query));
+  const visibleResults = results.filter((item) => canSee(user?.role || "operator", item.minimum));
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -131,9 +133,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="console-shell" data-sidebar-collapsed={collapsed}>
       <aside className="console-sidebar">
         <div className="console-sidebar__brand">
-          <span className="console-brand-mark"><ShieldCheck size={20} weight="bold" /></span>
-          <span className="console-brand-name">GateGuard</span>
-          <Button variant="ghost" shape="square" size="base" icon={SidebarSimple} aria-label={collapsed ? "Open sidebar" : "Collapse sidebar"} title={collapsed ? "Open sidebar" : "Collapse sidebar"} className="console-sidebar__toggle" onClick={toggleSidebar} />
+          {collapsed ? <Button variant="ghost" shape="square" size="base" icon={SidebarSimple} aria-label="Open sidebar" title="Open sidebar" className="console-brand-mark console-brand-mark--collapsed-toggle" onClick={toggleSidebar} /> : <><span className="console-brand-mark"><ShieldCheck size={20} weight="bold" /></span><span className="console-brand-name">GateGuard</span><Button variant="ghost" shape="square" size="base" icon={SidebarSimple} aria-label="Collapse sidebar" title="Collapse sidebar" className="console-sidebar__toggle" onClick={toggleSidebar} /></>}
         </div>
 
         <button type="button" className="console-workspace-switcher" onClick={openSearch} aria-label="Open workspace search">
@@ -181,8 +181,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {searchOpen && <div className="command-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
         <div className="command-dialog" role="dialog" aria-modal="true" aria-labelledby="command-title">
           <div className="command-dialog__header"><MagnifyingGlass size={18} /><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search pages" aria-label="Search pages" /><Button variant="ghost" shape="square" size="sm" icon={X} aria-label="Close search" onClick={() => setSearchOpen(false)} /></div>
-          <div className="command-dialog__hint" id="command-title">Navigate GateGuard <span>Esc to close</span></div>
-          <div className="command-dialog__results">{results.filter((item) => canSee(user.role, item.minimum)).map((item) => <button type="button" key={item.href} className="command-result" onClick={() => { setSearchOpen(false); router.push(item.href); }}><item.Icon size={17} /><span><strong>{item.label}</strong><small>{item.group}</small></span><CaretRight size={14} /></button>)}{results.length === 0 && <div className="command-empty">Tidak ada halaman yang cocok.</div>}</div>
+          <div className="command-dialog__hint" id="command-title">Navigate GateGuard <span>{visibleResults.length} results · Esc to close</span></div>
+          <div className="command-dialog__results">{visibleResults.map((item) => <button type="button" key={item.href} className="command-result" onClick={() => { setSearchOpen(false); router.push(item.href); }}><item.Icon size={17} /><span><strong>{item.label}</strong><small>{item.group} · {item.keywords.split(" ").slice(0, 3).join(" ")}</small></span><CaretRight size={14} /></button>)}{visibleResults.length === 0 && <div className="command-empty">No matching pages. Try shipment, review, documents, or people.</div>}</div>
         </div>
       </div>}
     </div>
