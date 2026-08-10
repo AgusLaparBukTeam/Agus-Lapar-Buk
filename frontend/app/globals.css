@@ -239,6 +239,13 @@ body { font-family: ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.005
 .command-result strong { font-size: 13px; font-weight: 600; }
 .command-result small { margin-top: 2px; color: #81868b; font-size: 11px; }
 .command-empty { padding: 24px 10px; color: #777d83; font-size: 13px; text-align: center; }
+.document-upload-panel { margin-bottom: 16px; }
+.document-upload-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(240px, 1.4fr); align-items: end; gap: 14px; padding: 16px; }
+.document-upload-form label { display: grid; gap: 7px; color: #32363a; font-size: 12px; font-weight: 600; }
+.document-upload-form select, .document-upload-form input[type="file"] { min-height: 38px; border: 1px solid #d7dadd; border-radius: 6px; background: #fff; padding: 0 10px; color: #1c2024; font-size: 13px; }
+.document-upload-form input[type="file"] { padding: 8px; }
+.document-upload-form .form-panel__actions { grid-column: 1 / -1; padding-top: 2px; }
+@media (max-width: 900px) { .document-upload-form { grid-template-columns: 1fr; } .document-upload-form .form-panel__actions { grid-column: auto; } }
 .auth-provider, .auth-sso, .auth-promo__signup { justify-content: center; text-align: center; }
 .auth-submit { justify-content: center; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }

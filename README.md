@@ -58,7 +58,7 @@ The first admin is created interactively. Passwords are never committed or logge
 
 ## Database and security
 
-Migration `0004_assurance_control_plane` adds organization, facility, membership, shipment lifecycle, document, assurance, exception, integration, job, notification, and audit boundaries. Passwords use Argon2id; only SHA-256 hashes of random session tokens are stored. Cookies are HttpOnly, SameSite=Lax, and Secure in production. Deactivation revokes active sessions, and the final active admin cannot be demoted or deactivated.
+Migrations `0004_assurance_control_plane` and `0005_assurance_integrity` add organization, facility, membership, shipment lifecycle, document, assurance, exception, integration, job, notification, worker heartbeat, and audit boundaries. Passwords use Argon2id; only SHA-256 hashes of random session tokens are stored. Cookies are HttpOnly, SameSite=Lax, and Secure in production. Deactivation revokes active sessions, and the final active admin cannot be demoted or deactivated.
 
 Production requires PostgreSQL, a 32+ character `APP_API_KEY`, explicit non-wildcard `CORS_ORIGINS`, and secure cookies. Never put `OPENAI_API_KEY`, `APP_API_KEY`, database passwords, or other secrets in `NEXT_PUBLIC_*` variables.
 
@@ -85,4 +85,4 @@ Compose validation requires Docker to be installed.
 
 ## Scope limitation
 
-The development metadata vault records document versions and secure storage keys; production object-storage wiring and external screening-provider credentials remain deployment configuration. GateGuard verifies cross-document consistency and workflow evidence; it does not prove physical contents or replace an authoritative WMS/ERP shipment reference.
+The document vault stores uploaded PDF/JPEG/PNG bytes in a bounded, organization-scoped filesystem volume, records SHA-256 hashes and immutable versions, and marks extraction as `NEEDS_REVIEW` when no provider is configured. S3-compatible object storage and external screening-provider adapters remain deployment configuration. GateGuard verifies cross-document consistency and workflow evidence; it does not prove physical contents or replace an authoritative WMS/ERP shipment reference.

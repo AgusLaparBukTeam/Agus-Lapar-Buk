@@ -86,6 +86,15 @@ export async function addExceptionComment(id: string, body: string): Promise<Rec
 export async function approveRelease(id: string, comment: string): Promise<Record<string, unknown>> { return ops(`/releases/${encodeURIComponent(id)}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment }) }); }
 export async function transitionShipment(id: string, status: string): Promise<Record<string, unknown>> { return ops(`/shipments/${encodeURIComponent(id)}/lifecycle`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }); }
 export async function createDocumentMetadata(payload: Record<string, unknown>): Promise<Record<string, unknown>> { return ops("/documents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }
+export async function uploadDocument(payload: { shipment_id: string; document_type: string; file: File; document_id?: string; requirement_id?: string }): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.set("shipment_id", payload.shipment_id);
+  form.set("document_type", payload.document_type);
+  if (payload.document_id) form.set("document_id", payload.document_id);
+  if (payload.requirement_id) form.set("requirement_id", payload.requirement_id);
+  form.set("file", payload.file);
+  return ops("/documents/upload", { method: "POST", body: form });
+}
 export async function fetchWebhooks(): Promise<{ items: Array<Record<string, unknown>> }> { return ops("/integrations/webhooks"); }
 export async function createWebhook(payload: Record<string, unknown>): Promise<Record<string, unknown>> { return ops("/integrations/webhooks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }
 export async function createConnection(payload: Record<string, unknown>): Promise<Record<string, unknown>> { return ops("/integrations/connections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }

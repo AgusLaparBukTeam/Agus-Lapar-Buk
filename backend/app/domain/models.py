@@ -30,6 +30,8 @@ class ReconciliationStatus(StrEnum):
 class ShipmentStatus(StrEnum):
     DRAFT = "DRAFT"
     DOCUMENTS_REQUIRED = "DOCUMENTS_REQUIRED"
+    READY_FOR_ASSESSMENT = "READY_FOR_ASSESSMENT"
+    ASSESSING = "ASSESSING"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
     HOLD = "HOLD"
     RELEASE_AUTHORIZED = "RELEASE_AUTHORIZED"
@@ -42,6 +44,7 @@ class RiskLevel(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 
 class WorkQueueStatus(StrEnum):

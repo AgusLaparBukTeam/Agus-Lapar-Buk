@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./gateguard.db"
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     max_upload_bytes: int = 10 * 1024 * 1024
+    document_storage_root: str = "./uploads"
+    document_allowed_mime_types: Annotated[list[str], NoDecode] = [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+    ]
     max_pdf_pages: int = 50
     max_pdf_text_chars: int = 500_000
     max_image_pixels: int = 40_000_000
@@ -31,6 +37,8 @@ class Settings(BaseSettings):
     extraction_provider: Literal["auto", "local", "openai", "paddle"] = "auto"
     critical_confidence_threshold: float = 0.75
     max_ai_concurrency: int = 4
+    worker_poll_interval_seconds: float = 2.0
+    worker_heartbeat_interval_seconds: float = 10.0
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-5"
@@ -43,6 +51,13 @@ class Settings(BaseSettings):
     def parse_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("document_allowed_mime_types", mode="before")
+    @classmethod
+    def parse_document_mime_types(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip().lower() for item in value.split(",") if item.strip()]
         return value
 
     @field_validator("critical_confidence_threshold")

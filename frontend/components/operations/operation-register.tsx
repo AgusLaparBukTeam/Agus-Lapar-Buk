@@ -17,7 +17,7 @@ const configs: Record<string, { title: string; description: string; path: string
     { label: "Version", value: (row) => row.version ? `v${String((row.version as Record<string, unknown>).version)}` : "—" },
     { label: "Extraction", value: (row) => row.version ? String((row.version as Record<string, unknown>).extraction_status) : "Pending" },
     { label: "Status", value: (row) => <span className="table-status">{String(row.status)}</span> },
-  ], action: { href: "/reconcile", label: "Upload document" } },
+  ] },
   parties: { title: "Parties", description: "Maintain the trading parties involved in shipment cases.", path: "/parties", columns: [
     { label: "Party", value: (row) => <strong>{String(row.legal_name)}</strong> },
     { label: "Country", value: (row) => String(row.country_code || "—") },

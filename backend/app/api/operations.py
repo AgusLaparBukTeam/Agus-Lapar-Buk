@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from starlette.background import BackgroundTask
+from starlette.responses import StreamingResponse
 
 from app.auth.dependencies import current_user, require_role
 from app.core.config import get_settings
 from app.core.errors import GateGuardError
 from app.repositories.operations import DomainEventRow, OperationsRepository
 from app.repositories.reconciliations import UserRow
+from app.services.document_storage import DocumentStorage
 
 router = APIRouter()
 
@@ -103,6 +108,76 @@ class ShipmentLifecyclePayload(BaseModel):
     status: str = Field(min_length=2, max_length=32)
 
 
+class TrustedReferencePayload(BaseModel):
+    order_reference: str | None = Field(default=None, max_length=120)
+    shipment_reference: str | None = Field(default=None, max_length=120)
+    expected_shipper: str | None = Field(default=None, max_length=160)
+    expected_recipient: str | None = Field(default=None, max_length=160)
+    expected_destination: str | None = Field(default=None, max_length=160)
+    expected_currency: str | None = Field(default=None, max_length=8)
+    expected_total: float | None = Field(default=None, ge=0)
+    source_system: str = Field(default="Workspace entry", max_length=80)
+    source_type: str = Field(default="MANUAL_AUTHORITATIVE_ENTRY", max_length=40)
+    source_record_id: str | None = Field(default=None, max_length=120)
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=1000)
+
+
+class PartyPayload(BaseModel):
+    legal_name: str = Field(min_length=2, max_length=200)
+    trade_name: str | None = Field(default=None, max_length=200)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    address: str | None = Field(default=None, max_length=1000)
+    city: str | None = Field(default=None, max_length=100)
+    region: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=40)
+    tax_identifier: str | None = Field(default=None, max_length=100)
+    external_identifier: str | None = Field(default=None, max_length=100)
+    shipment_id: str | None = Field(default=None, max_length=36)
+    role: str = Field(default="OTHER", max_length=32)
+
+
+class ItemPayload(BaseModel):
+    shipment_id: str = Field(min_length=1, max_length=36)
+    line_number: int = Field(ge=1, le=100000)
+    sku: str | None = Field(default=None, max_length=120)
+    description: str = Field(min_length=1, max_length=400)
+    quantity: float = Field(ge=0)
+    unit_of_measure: str = Field(default="unit", max_length=24)
+    unit_price: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, max_length=8)
+    line_total: float | None = Field(default=None, ge=0)
+    country_of_origin: str | None = Field(default=None, min_length=2, max_length=2)
+    hs_code: str | None = Field(default=None, max_length=32)
+    gross_weight: float | None = Field(default=None, ge=0)
+    net_weight: float | None = Field(default=None, ge=0)
+    dangerous_goods: bool = False
+    un_number: str | None = Field(default=None, max_length=16)
+    proper_shipping_name: str | None = Field(default=None, max_length=240)
+    hazard_class: str | None = Field(default=None, max_length=32)
+    packing_group: str | None = Field(default=None, max_length=16)
+    special_handling: str | None = Field(default=None, max_length=2000)
+    package_count: int | None = Field(default=None, ge=0)
+
+
+class TransportPayload(BaseModel):
+    shipment_id: str = Field(min_length=1, max_length=36)
+    sequence: int = Field(default=1, ge=1, le=100)
+    mode: str = Field(min_length=2, max_length=24)
+    carrier: str | None = Field(default=None, max_length=160)
+    origin: str | None = Field(default=None, max_length=160)
+    destination: str | None = Field(default=None, max_length=160)
+    planned_departure: datetime | None = None
+    planned_arrival: datetime | None = None
+    actual_departure: datetime | None = None
+    actual_arrival: datetime | None = None
+    vessel: str | None = Field(default=None, max_length=120)
+    voyage: str | None = Field(default=None, max_length=80)
+    flight: str | None = Field(default=None, max_length=80)
+    vehicle_reference: str | None = Field(default=None, max_length=80)
+
+
 @router.get("/api/organizations")
 def organizations(user: UserRow = Depends(current_user)):
     return {"items": get_operations().list_organizations(user)}
@@ -132,12 +207,19 @@ def record_recent(payload: dict[str, str], request: Request, user: UserRow = Dep
 def search(
     request: Request,
     q: str = Query(min_length=1, max_length=120),
+    types: list[str] | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=50),
     user: UserRow = Depends(current_user),
 ):
     org = organization(request, user)
     return {
-        "items": get_operations().search(organization_id=org.id, user=user, query=q, limit=limit)
+        "items": get_operations().search(
+            organization_id=org.id,
+            user=user,
+            query=q,
+            limit=limit,
+            types=set(types or []),
+        )
     }
 
 
@@ -156,16 +238,86 @@ def shipment_workspace(shipment_id: str, request: Request, user: UserRow = Depen
     return detail
 
 
+@router.post("/api/shipments/{shipment_id}/assess", status_code=202)
+def assess_shipment(shipment_id: str, request: Request, user: UserRow = Depends(current_user)):
+    org = organization(request, user)
+    result = get_operations().run_assessment(
+        organization_id=org.id, shipment_id=shipment_id, user=user
+    )
+    audit(request, "assessment.started", "shipment", shipment_id, user, result)
+    return result
+
+
+@router.get("/api/shipments/{shipment_id}/trusted-reference")
+def trusted_reference(shipment_id: str, request: Request, user: UserRow = Depends(current_user)):
+    org = organization(request, user)
+    from app.repositories.reconciliations import TrustedShipmentReferenceRow
+
+    with get_operations().session_factory() as session:
+        reference = session.scalar(
+            select(TrustedShipmentReferenceRow).where(
+                TrustedShipmentReferenceRow.shipment_id == shipment_id,
+                TrustedShipmentReferenceRow.organization_id == org.id,
+            )
+        )
+        if reference is None:
+            raise GateGuardError(
+                "Trusted source has not been recorded.", code="NOT_FOUND", status_code=404
+            )
+        return {
+            "reference": {
+                column.name: getattr(reference, column.name)
+                for column in reference.__table__.columns
+            }
+        }
+
+
+@router.put("/api/shipments/{shipment_id}/trusted-reference")
+def save_trusted_reference(
+    shipment_id: str,
+    payload: TrustedReferencePayload,
+    request: Request,
+    user: UserRow = Depends(require_role("supervisor", "admin")),
+):
+    org = organization(request, user)
+    result = get_operations().save_trusted_reference(
+        organization_id=org.id,
+        shipment_id=shipment_id,
+        user=user,
+        payload=payload.model_dump(),
+    )
+    audit(request, "trusted_reference.updated", "shipment", shipment_id, user)
+    return result
+
+
 @router.get("/api/parties")
 def parties(request: Request, q: str | None = None, user: UserRow = Depends(current_user)):
     org = organization(request, user)
     return {"items": get_operations().list_parties(organization_id=org.id, query=q)}
 
 
+@router.post("/api/parties", status_code=201)
+def create_party(payload: PartyPayload, request: Request, user: UserRow = Depends(current_user)):
+    org = organization(request, user)
+    result = get_operations().create_party(
+        organization_id=org.id, user=user, payload=payload.model_dump()
+    )
+    audit(request, "party.created", "party", result["id"], user)
+    return result
+
+
 @router.get("/api/products")
 def products(request: Request, q: str | None = None, user: UserRow = Depends(current_user)):
     org = organization(request, user)
     return {"items": get_operations().list_items(organization_id=org.id, query=q)}
+
+
+@router.post("/api/products", status_code=201)
+def create_product(payload: ItemPayload, request: Request, user: UserRow = Depends(current_user)):
+    org = organization(request, user)
+    result = get_operations().create_item(organization_id=org.id, payload=payload.model_dump())
+    audit(request, "shipment_item.created", "shipment_item", result["id"], user)
+    return result
 
 
 @router.get("/api/transport")
@@ -176,6 +328,16 @@ def transport(
     return {
         "items": get_operations().list_transport(organization_id=org.id, shipment_id=shipment_id)
     }
+
+
+@router.post("/api/transport", status_code=201)
+def create_transport(
+    payload: TransportPayload, request: Request, user: UserRow = Depends(current_user)
+):
+    org = organization(request, user)
+    result = get_operations().create_transport(organization_id=org.id, payload=payload.model_dump())
+    audit(request, "transport_leg.created", "transport_leg", result["id"], user)
+    return result
 
 
 @router.get("/api/documents")
@@ -210,6 +372,80 @@ def create_document(
         {"shipment_id": payload.shipment_id},
     )
     return result
+
+
+@router.post("/api/documents/upload", status_code=201)
+def upload_document(
+    request: Request,
+    shipment_id: str = Form(..., min_length=1, max_length=36),
+    document_type: str = Form(..., min_length=2, max_length=48),
+    document_id: str | None = Form(default=None, max_length=36),
+    requirement_id: str | None = Form(default=None, max_length=36),
+    file: UploadFile = File(...),
+    user: UserRow = Depends(current_user),
+):
+    settings = get_settings()
+    content_type = (file.content_type or "").lower()
+    if content_type not in {item.lower() for item in settings.document_allowed_mime_types}:
+        raise GateGuardError(
+            "This file type is not allowed by the workspace document policy.",
+            code="INVALID_MIME_TYPE",
+            status_code=422,
+        )
+    org = organization(request, user)
+    filename = re.sub(r"[\x00-\x1f\x7f]", "", Path(file.filename or "document").name).strip()
+    if not filename or filename in {".", ".."}:
+        raise GateGuardError(
+            "A valid filename is required.", code="INVALID_FILENAME", status_code=422
+        )
+    storage_key = f"{org.id}/{shipment_id}/{uuid.uuid4()}.bin"
+    storage = DocumentStorage(settings.document_storage_root)
+    size_bytes, sha256 = storage.write(storage_key, file.file, max_bytes=settings.max_upload_bytes)
+    try:
+        result = get_operations().create_document_version(
+            organization_id=org.id,
+            user=user,
+            shipment_id=shipment_id,
+            document_type=document_type,
+            filename=filename,
+            mime_type=content_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+            storage_key=storage_key,
+            document_id=document_id,
+            requirement_id=requirement_id,
+        )
+    except Exception:
+        storage.path_for(storage_key).unlink(missing_ok=True)
+        raise
+    audit(
+        request, "document.uploaded", "document", result["id"], user, {"shipment_id": shipment_id}
+    )
+    return result
+
+
+@router.get("/api/documents/{document_id}/download")
+def download_document(
+    document_id: str,
+    request: Request,
+    version: int | None = Query(default=None, ge=1),
+    user: UserRow = Depends(current_user),
+):
+    settings = get_settings()
+    org = organization(request, user)
+    metadata = get_operations().document_content_metadata(
+        organization_id=org.id, document_id=document_id, version=version
+    )
+    storage = DocumentStorage(settings.document_storage_root)
+    stream = storage.open(metadata["storage_key"])
+    filename = re.sub(r"[\x00-\x1f\x7f\"]", "", Path(str(metadata["filename"])).name).strip()
+    filename = filename or "document"
+    return StreamingResponse(
+        stream,
+        media_type=metadata["mime_type"],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        background=BackgroundTask(stream.close),
+    )
 
 
 @router.get("/api/requirements")
@@ -396,6 +632,23 @@ def screening(request: Request, user: UserRow = Depends(current_user)):
         }
 
 
+@router.post("/api/shipments/{shipment_id}/screening", status_code=202)
+def run_screening(
+    shipment_id: str,
+    request: Request,
+    party_id: str | None = Query(default=None, max_length=36),
+    user: UserRow = Depends(current_user),
+):
+    org = organization(request, user)
+    result = get_operations().run_screening(
+        organization_id=org.id, shipment_id=shipment_id, party_id=party_id, user=user
+    )
+    audit(
+        request, "screening.completed", "shipment", shipment_id, user, {"result": result["result"]}
+    )
+    return result
+
+
 @router.get("/api/dangerous-goods")
 def dangerous_goods(request: Request, user: UserRow = Depends(current_user)):
     org = organization(request, user)
@@ -472,13 +725,6 @@ def observability(request: Request, user: UserRow = Depends(current_user)):
     jobs = get_operations().list_jobs(organization_id=org.id)
     now = datetime.now(UTC)
     active_jobs = [item for item in jobs if item["status"] in {"QUEUED", "RUNNING"}]
-    running_jobs = [
-        item
-        for item in jobs
-        if item["status"] == "RUNNING"
-        and item.get("heartbeat_at")
-        and (now - item["heartbeat_at"].replace(tzinfo=UTC)).total_seconds() < 120
-    ]
     try:
         with get_operations().engine.connect() as connection:
             connection.exec_driver_sql("SELECT 1")
@@ -490,10 +736,35 @@ def observability(request: Request, user: UserRow = Depends(current_user)):
     )
     connections = get_operations().list_connections(organization_id=org.id)
     webhooks = get_operations().list_webhooks(organization_id=org.id)
+    from app.repositories.operations import WorkerHeartbeatRow
+
+    with get_operations().session_factory() as session:
+        workers = list(
+            session.scalars(
+                select(WorkerHeartbeatRow).order_by(WorkerHeartbeatRow.last_heartbeat_at.desc())
+            )
+        )
+    live_workers = [
+        worker
+        for worker in workers
+        if (now - worker.last_heartbeat_at.replace(tzinfo=UTC)).total_seconds() < 120
+    ]
+    succeeded_jobs = sum(item["status"] == "SUCCEEDED" for item in jobs)
+    failed_jobs = sum(item["status"] in {"FAILED", "DEAD_LETTER"} for item in jobs)
     return {
         "application": "healthy" if database_status == "healthy" else "degraded",
         "database": database_status,
-        "worker": "healthy" if running_jobs else "idle" if active_jobs else "not_running",
+        "worker": "healthy" if live_workers else "not_running",
+        "workers": [
+            {
+                "worker_id": worker.worker_id,
+                "status": worker.status,
+                "version": worker.version,
+                "last_heartbeat_at": worker.last_heartbeat_at,
+                "current_job_id": worker.current_job_id,
+            }
+            for worker in live_workers
+        ],
         "extraction": "configured" if configured_extraction else "needs_setup",
         "webhook": "configured" if any(item["enabled"] for item in webhooks) else "not_configured",
         "connections": {
@@ -502,6 +773,8 @@ def observability(request: Request, user: UserRow = Depends(current_user)):
         },
         "jobs": jobs[:20],
         "queue_depth": len(active_jobs),
+        "jobs_succeeded": succeeded_jobs,
+        "jobs_failed": failed_jobs,
         "oldest_queued_job": next(
             (item for item in reversed(jobs) if item["status"] == "QUEUED"), None
         ),

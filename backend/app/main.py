@@ -82,3 +82,9 @@ def readyz():
     # Execute a real query so readiness fails if a cached repository loses DB connectivity.
     get_repository().ping()
     return {"status": "ready"}
+
+
+@app.get("/api/health/ready")
+def api_readyz():
+    """Compatibility readiness path used by deployment smoke checks."""
+    return readyz()

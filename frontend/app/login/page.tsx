@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { fetchMe, login } from "@/lib/api";
 
 function GateLogo() {
-  return <div className="gate-logo" aria-label="GateGuard"><span className="gate-logo__mark">G</span><span className="gate-logo__word">GateGuard</span></div>;
+  return <div className="gate-logo" aria-label="GateGuard"><span className="gate-logo__word">GateGuard</span></div>;
 }
 
 export default function LoginPage() {

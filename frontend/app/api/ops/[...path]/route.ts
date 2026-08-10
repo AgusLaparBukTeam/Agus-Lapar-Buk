@@ -6,9 +6,13 @@ async function proxy(request: Request, method: string) {
   try {
     const url = new URL(request.url);
     const path = url.pathname.replace(/^\/api\/ops/, "") || "/";
-    const body = method === "GET" || method === "DELETE" ? undefined : await request.text();
-    const headers = new Headers();
     const contentType = request.headers.get("content-type");
+    const body = method === "GET" || method === "DELETE"
+      ? undefined
+      : contentType?.toLowerCase().startsWith("multipart/")
+        ? await request.arrayBuffer()
+        : await request.text();
+    const headers = new Headers();
     const organization = request.headers.get("x-gateguard-organization");
     if (contentType) headers.set("Content-Type", contentType);
     if (organization) headers.set("X-GateGuard-Organization", organization);

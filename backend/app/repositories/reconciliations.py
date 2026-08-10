@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ from app.domain.models import (
     ShipmentStatus,
     WorkQueueStatus,
 )
+from app.services.assurance import calculate_risk
 
 
 class Base(DeclarativeBase):
@@ -166,6 +168,7 @@ class TrustedShipmentReferenceRow(Base):
     __tablename__ = "trusted_shipment_references"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     shipment_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("shipment_cases.id", ondelete="CASCADE"),
@@ -179,13 +182,35 @@ class TrustedShipmentReferenceRow(Base):
     expected_currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
     expected_total: Mapped[float | None] = mapped_column(Float, nullable=True)
     source_system: Mapped[str] = mapped_column(String(80))
+    source_type: Mapped[str] = mapped_column(String(40), default="MANUAL_AUTHORITATIVE_ENTRY")
+    source_record_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    expected_shipper: Mapped[str | None] = mapped_column(String(160), nullable=True)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TrustedReferenceItemRow(Base):
+    __tablename__ = "trusted_reference_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    reference_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trusted_shipment_references.id", ondelete="CASCADE"), index=True
+    )
+    sku: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    unit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    line_total: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class ReviewTaskRow(Base):
     __tablename__ = "review_tasks"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     shipment_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("shipment_cases.id", ondelete="CASCADE"),
@@ -201,6 +226,11 @@ class ReviewTaskRow(Base):
         nullable=True,
         index=True,
     )
+    severity: Mapped[str] = mapped_column(String(16), default="MEDIUM", index=True)
+    exception_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -210,13 +240,21 @@ class ReleaseDecisionRow(Base):
     __tablename__ = "release_decisions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     shipment_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("shipment_cases.id", ondelete="CASCADE"), index=True
     )
     decision: Mapped[str] = mapped_column(String(16))
+    sequence: Mapped[int] = mapped_column(Integer, default=1)
     reason: Mapped[str] = mapped_column(Text)
+    decision_snapshot_json: Mapped[str] = mapped_column(Text, default="{}")
+    evidence_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rule_pack_versions_json: Mapped[str] = mapped_column(Text, default="[]")
+    assurance_check_versions_json: Mapped[str] = mapped_column(Text, default="[]")
     decided_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    supersedes_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 def user_dict(user: UserRow) -> dict[str, Any]:
@@ -554,6 +592,7 @@ class ReconciliationRepository:
             )
             reference = TrustedShipmentReferenceRow(
                 id=str(uuid.uuid4()),
+                organization_id=organization.id,
                 shipment_id=shipment.id,
                 order_reference=payload.get("external_reference"),
                 shipment_reference=payload["internal_reference"],
@@ -562,15 +601,23 @@ class ReconciliationRepository:
                 expected_currency=payload.get("expected_currency"),
                 expected_total=payload.get("expected_total"),
                 source_system="Workspace entry",
+                source_type="MANUAL_AUTHORITATIVE_ENTRY",
+                source_record_id=None,
+                content_hash=None,
+                version=1,
+                expected_shipper=payload.get("expected_shipper"),
                 retrieved_at=now,
             )
             task = ReviewTaskRow(
                 id=str(uuid.uuid4()),
+                organization_id=organization.id,
                 shipment_id=shipment.id,
                 issue="Add the shipment documents for review.",
                 priority=RiskLevel.LOW.value,
                 stage="Documents",
                 status=WorkQueueStatus.OPEN.value,
+                severity=RiskLevel.LOW.value,
+                last_activity_at=now,
                 created_at=now,
                 updated_at=now,
             )
@@ -586,7 +633,7 @@ class ReconciliationRepository:
                 for name, document_type, reason in (
                     (
                         "Commercial invoice",
-                        "INVOICE",
+                        "COMMERCIAL_INVOICE",
                         "Confirms declared value and commercial terms.",
                     ),
                     ("Packing list", "PACKING_LIST", "Confirms items and package counts."),
@@ -600,6 +647,8 @@ class ReconciliationRepository:
                         id=str(uuid.uuid4()),
                         organization_id=organization.id,
                         rule_pack_id=None,
+                        rule_id=f"BASE-{document_type}",
+                        rule_pack_version="baseline-1",
                         name=name,
                         document_type=document_type,
                         status="ACTIVE",
@@ -616,6 +665,7 @@ class ReconciliationRepository:
                     organization_id=organization.id,
                     shipment_id=shipment.id,
                     requirement_id=requirement.id,
+                    rule_id=requirement.rule_id,
                     rule_pack_version="baseline-1",
                     result="PENDING",
                     reason="Required evidence has not been attached yet.",
@@ -834,7 +884,13 @@ class ReconciliationRepository:
         actor: UserRow,
         organization_id: str | None = None,
     ) -> tuple[dict[str, Any], datetime]:
-        from app.repositories.operations import DomainEventRow
+        from app.repositories.operations import (
+            AssuranceCheckRow,
+            DocumentRequirementRow,
+            DomainEventRow,
+            RequirementEvaluationRow,
+            ShipmentExceptionRow,
+        )
 
         now = datetime.now(UTC)
         with self.session_factory() as session:
@@ -850,6 +906,10 @@ class ReconciliationRepository:
             )
             if shipment is None:
                 raise NotFoundError("Shipment was not found.")
+            if decision not in {"AUTHORIZE", "HOLD", "REVIEW_REQUIRED"}:
+                raise GateGuardError(
+                    "Release decision is invalid.", code="VALIDATION_ERROR", status_code=422
+                )
             open_tasks = (
                 session.scalar(
                     select(func.count(ReviewTaskRow.id)).where(
@@ -859,27 +919,102 @@ class ReconciliationRepository:
                 )
                 or 0
             )
-            if decision == "AUTHORIZE" and open_tasks:
+            evaluations = list(
+                session.execute(
+                    select(RequirementEvaluationRow, DocumentRequirementRow)
+                    .join(
+                        DocumentRequirementRow,
+                        DocumentRequirementRow.id == RequirementEvaluationRow.requirement_id,
+                    )
+                    .where(RequirementEvaluationRow.shipment_id == shipment_id)
+                )
+            )
+            missing_requirements = [
+                requirement.name
+                for evaluation, requirement in evaluations
+                if requirement.status in {"REQUIRED", "ACTIVE"}
+                and evaluation.result not in {"PROVIDED", "CLEAR", "NOT_APPLICABLE"}
+            ]
+            latest_checks: dict[str, AssuranceCheckRow] = {}
+            for check in session.scalars(
+                select(AssuranceCheckRow)
+                .where(AssuranceCheckRow.shipment_id == shipment_id)
+                .order_by(AssuranceCheckRow.created_at.desc())
+            ):
+                latest_checks.setdefault(check.check_type, check)
+            blocking_checks = [
+                check.check_type
+                for check in latest_checks.values()
+                if check.status in {"HOLD", "REVIEW", "PENDING", "RUNNING", "FAILED"}
+            ]
+            open_exceptions = list(
+                session.scalars(
+                    select(ShipmentExceptionRow).where(
+                        ShipmentExceptionRow.shipment_id == shipment_id,
+                        ShipmentExceptionRow.status.not_in(["RESOLVED", "CANCELLED"]),
+                    )
+                )
+            )
+            blocking_exceptions = [
+                item.summary for item in open_exceptions if item.severity in {"HIGH", "CRITICAL"}
+            ]
+            if decision == "AUTHORIZE" and (
+                open_tasks or missing_requirements or blocking_checks or blocking_exceptions
+            ):
                 raise GateGuardError(
-                    "Resolve all open shipment checks before authorizing release.",
+                    "Release is blocked until required evidence, assurance checks, and "
+                    "blocking exceptions are clear.",
                     code="REVIEW_REQUIRED",
                     status_code=409,
                 )
+            snapshot = {
+                "shipment_status": shipment.status,
+                "missing_requirements": missing_requirements,
+                "blocking_checks": blocking_checks,
+                "blocking_exceptions": blocking_exceptions,
+                "open_tasks": int(open_tasks),
+            }
+            risk = calculate_risk(
+                [("BLOCKING_ASSURANCE", item) for item in blocking_checks]
+                + [("HIGH_CRITICAL_EXCEPTION", item) for item in blocking_exceptions]
+                + [("MISSING_REQUIRED_DOCUMENT", item) for item in missing_requirements]
+            )
             shipment.status = (
                 ShipmentStatus.RELEASE_AUTHORIZED.value
                 if decision == "AUTHORIZE"
                 else ShipmentStatus.HOLD.value
             )
             shipment.risk_level = (
-                RiskLevel.LOW.value if decision == "AUTHORIZE" else RiskLevel.HIGH.value
+                risk.level.value if decision == "AUTHORIZE" else RiskLevel.HIGH.value
             )
+            shipment.risk_score = risk.score
+            shipment.risk_factors_json = json.dumps(risk.factors)
+            sequence = (
+                session.scalar(
+                    select(func.max(ReleaseDecisionRow.sequence)).where(
+                        ReleaseDecisionRow.shipment_id == shipment_id
+                    )
+                )
+                or 0
+            ) + 1
+            evidence_hash = hashlib.sha256(
+                json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
             shipment.updated_at = now
             session.add(
                 ReleaseDecisionRow(
                     id=str(uuid.uuid4()),
+                    organization_id=shipment.organization_id,
                     shipment_id=shipment_id,
                     decision=decision,
+                    sequence=sequence,
                     reason=reason,
+                    decision_snapshot_json=json.dumps(snapshot),
+                    evidence_hash=evidence_hash,
+                    rule_pack_versions_json=json.dumps(["baseline-1"]),
+                    assurance_check_versions_json=json.dumps(
+                        [check.source_version for check in latest_checks.values()]
+                    ),
                     decided_by=actor.id,
                     created_at=now,
                 )
@@ -888,11 +1023,14 @@ class ReconciliationRepository:
                 session.add(
                     ReviewTaskRow(
                         id=str(uuid.uuid4()),
+                        organization_id=shipment.organization_id,
                         shipment_id=shipment_id,
                         issue=reason,
                         priority=RiskLevel.HIGH.value,
                         stage="Release decision",
                         status=WorkQueueStatus.OPEN.value,
+                        severity=RiskLevel.HIGH.value,
+                        last_activity_at=now,
                         created_at=now,
                         updated_at=now,
                     )

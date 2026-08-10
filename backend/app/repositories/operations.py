@@ -4,7 +4,7 @@ import hashlib
 import json
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -30,6 +30,7 @@ from app.repositories.reconciliations import (
     ShipmentCaseRow,
     UserRow,
 )
+from app.services.assurance import calculate_risk
 
 
 def now_utc() -> datetime:
@@ -281,6 +282,8 @@ class DocumentRequirementRow(Base):
     organization_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
+    rule_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    rule_pack_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
     rule_pack_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     name: Mapped[str] = mapped_column(String(200))
     document_type: Mapped[str] = mapped_column(String(48))
@@ -304,6 +307,7 @@ class RequirementEvaluationRow(Base):
     requirement_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("document_requirements.id", ondelete="CASCADE"), index=True
     )
+    rule_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     rule_pack_version: Mapped[str] = mapped_column(String(40))
     result: Mapped[str] = mapped_column(String(24), index=True)
     reason: Mapped[str] = mapped_column(Text)
@@ -614,6 +618,37 @@ class ScreeningRunRow(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ScreeningMatchRow(Base):
+    __tablename__ = "screening_matches"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    screening_run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("screening_runs.id", ondelete="CASCADE"), index=True
+    )
+    matched_name: Mapped[str] = mapped_column(String(200))
+    matched_identifier: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    dataset_record_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    disposition: Mapped[str] = mapped_column(String(40), default="REQUIRES_REVIEW")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class WorkerHeartbeatRow(Base):
+    __tablename__ = "worker_heartbeats"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    worker_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    version: Mapped[str] = mapped_column(String(40), default="unknown")
+    current_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    safe_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class DomainEventRow(Base):
     __tablename__ = "domain_events"
 
@@ -846,7 +881,13 @@ class OperationsRepository:
             return [row_dict(row) for row in rows]
 
     def search(
-        self, *, organization_id: str, user: UserRow, query: str, limit: int = 20
+        self,
+        *,
+        organization_id: str,
+        user: UserRow,
+        query: str,
+        limit: int = 20,
+        types: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         term = f"%{query.strip()}%"
         bounded = max(1, min(limit, 50))
@@ -1001,6 +1042,49 @@ class OperationsRepository:
                     }
                     for item in users
                 )
+                if user.role == UserRole.ADMIN.value:
+                    packs = list(
+                        session.scalars(
+                            select(RulePackRow)
+                            .where(
+                                RulePackRow.organization_id == organization_id,
+                                RulePackRow.name.like(term),
+                            )
+                            .limit(bounded)
+                        )
+                    )
+                    result.extend(
+                        {
+                            "type": "rule_pack",
+                            "id": pack.id,
+                            "label": pack.name,
+                            "description": f"Version {pack.version}",
+                            "href": "/governance/rule-packs",
+                        }
+                        for pack in packs
+                    )
+                    connections = list(
+                        session.scalars(
+                            select(IntegrationConnectionRow)
+                            .where(
+                                IntegrationConnectionRow.organization_id == organization_id,
+                                IntegrationConnectionRow.name.like(term),
+                            )
+                            .limit(bounded)
+                        )
+                    )
+                    result.extend(
+                        {
+                            "type": "integration",
+                            "id": connection.id,
+                            "label": connection.name,
+                            "description": connection.status,
+                            "href": "/integrations/connections",
+                        }
+                        for connection in connections
+                    )
+        if types:
+            result = [item for item in result if item["type"] in types]
         return result[:bounded]
 
     def list_parties(
@@ -1040,6 +1124,64 @@ class OperationsRepository:
                 )
             return output
 
+    def create_party(
+        self, *, organization_id: str, user: UserRow, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        now = now_utc()
+        with self.session_factory() as session:
+            party = TradePartyRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                legal_name=str(payload["legal_name"]).strip(),
+                trade_name=payload.get("trade_name"),
+                country_code=payload.get("country_code"),
+                address=payload.get("address"),
+                city=payload.get("city"),
+                region=payload.get("region"),
+                postal_code=payload.get("postal_code"),
+                email=payload.get("email"),
+                phone=payload.get("phone"),
+                tax_identifier=payload.get("tax_identifier"),
+                external_identifier=payload.get("external_identifier"),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(party)
+            session.flush()
+            if payload.get("shipment_id"):
+                shipment = session.scalar(
+                    select(ShipmentCaseRow).where(
+                        ShipmentCaseRow.id == payload["shipment_id"],
+                        ShipmentCaseRow.organization_id == organization_id,
+                    )
+                )
+                if shipment is None:
+                    raise NotFoundError("Shipment was not found in this workspace.")
+                session.add(
+                    ShipmentPartyRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        shipment_id=shipment.id,
+                        party_id=party.id,
+                        role=str(payload.get("role") or "OTHER"),
+                        created_at=now,
+                    )
+                )
+            if payload.get("external_identifier"):
+                session.add(
+                    PartyIdentifierRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        party_id=party.id,
+                        identifier_type="EXTERNAL",
+                        identifier_value=str(payload["external_identifier"]),
+                        created_at=now,
+                    )
+                )
+            session.commit()
+            session.refresh(party)
+            return row_dict(party)
+
     def list_items(
         self, *, organization_id: str, query: str | None = None, limit: int = 100
     ) -> list[dict[str, Any]]:
@@ -1068,6 +1210,49 @@ class OperationsRepository:
                 for item, shipment in rows
             ]
 
+    def create_item(self, *, organization_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        now = now_utc()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == payload["shipment_id"],
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            item = ShipmentItemRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                shipment_id=shipment.id,
+                line_number=int(payload["line_number"]),
+                sku=payload.get("sku"),
+                description=str(payload["description"]),
+                quantity=float(payload.get("quantity") or 0),
+                unit_of_measure=str(payload.get("unit_of_measure") or "unit"),
+                unit_price=payload.get("unit_price"),
+                currency=payload.get("currency"),
+                line_total=payload.get("line_total"),
+                country_of_origin=payload.get("country_of_origin"),
+                hs_code=payload.get("hs_code"),
+                gross_weight=payload.get("gross_weight"),
+                net_weight=payload.get("net_weight"),
+                dangerous_goods=bool(payload.get("dangerous_goods")),
+                un_number=payload.get("un_number"),
+                proper_shipping_name=payload.get("proper_shipping_name"),
+                hazard_class=payload.get("hazard_class"),
+                packing_group=payload.get("packing_group"),
+                special_handling=payload.get("special_handling"),
+                package_count=payload.get("package_count"),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(item)
+            shipment.updated_at = now
+            session.commit()
+            session.refresh(item)
+            return row_dict(item)
+
     def list_transport(
         self, *, organization_id: str, shipment_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -1079,6 +1264,42 @@ class OperationsRepository:
                 row_dict(row)
                 for row in session.scalars(stmt.order_by(TransportLegRow.sequence.asc()))
             ]
+
+    def create_transport(self, *, organization_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        now = now_utc()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == payload["shipment_id"],
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            leg = TransportLegRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                shipment_id=shipment.id,
+                sequence=int(payload.get("sequence") or 1),
+                mode=str(payload["mode"]),
+                carrier=payload.get("carrier"),
+                origin=payload.get("origin"),
+                destination=payload.get("destination"),
+                planned_departure=payload.get("planned_departure"),
+                planned_arrival=payload.get("planned_arrival"),
+                actual_departure=payload.get("actual_departure"),
+                actual_arrival=payload.get("actual_arrival"),
+                vessel=payload.get("vessel"),
+                voyage=payload.get("voyage"),
+                flight=payload.get("flight"),
+                vehicle_reference=payload.get("vehicle_reference"),
+                created_at=now,
+            )
+            session.add(leg)
+            shipment.updated_at = now
+            session.commit()
+            session.refresh(leg)
+            return row_dict(leg)
 
     def list_documents(
         self,
@@ -1126,7 +1347,7 @@ class OperationsRepository:
                     {
                         **row_dict(document),
                         "shipment_reference": shipment.internal_reference,
-                        "version": row_dict(version) if version else None,
+                        "version": row_dict(version, exclude={"storage_key"}) if version else None,
                     }
                 )
             return output
@@ -1804,7 +2025,723 @@ class OperationsRepository:
             shipment.updated_at = now
             session.commit()
             session.refresh(document)
-            return row_dict(document) | {"version": row_dict(version)}
+            return row_dict(document) | {"version": row_dict(version, exclude={"storage_key"})}
+
+    def create_document_version(
+        self,
+        *,
+        organization_id: str,
+        user: UserRow,
+        shipment_id: str,
+        document_type: str,
+        filename: str,
+        mime_type: str,
+        size_bytes: int,
+        sha256: str,
+        storage_key: str,
+        document_id: str | None = None,
+        requirement_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist an uploaded document version without exposing its storage path."""
+        now = now_utc()
+        normalized_type = document_type.upper()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            document = (
+                session.scalar(
+                    select(ShipmentDocumentRow).where(
+                        ShipmentDocumentRow.id == document_id,
+                        ShipmentDocumentRow.organization_id == organization_id,
+                        ShipmentDocumentRow.shipment_id == shipment_id,
+                    )
+                )
+                if document_id
+                else None
+            )
+            if document is None:
+                document = ShipmentDocumentRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    shipment_id=shipment_id,
+                    document_type=normalized_type,
+                    requirement_id=requirement_id,
+                    current_version_id=None,
+                    status="RECEIVED",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(document)
+                session.flush()
+            versions = list(
+                session.scalars(
+                    select(DocumentVersionRow)
+                    .where(DocumentVersionRow.document_id == document.id)
+                    .order_by(DocumentVersionRow.version.desc())
+                )
+            )
+            previous = versions[0] if versions else None
+            version = DocumentVersionRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                document_id=document.id,
+                version=(previous.version + 1) if previous else 1,
+                filename=filename,
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+                sha256=sha256,
+                uploaded_by=user.id,
+                uploaded_at=now,
+                storage_key=storage_key,
+                extraction_status="QUEUED",
+                extraction_provider=None,
+                extraction_confidence=None,
+                supersedes_version_id=previous.id if previous else None,
+            )
+            if previous:
+                previous_document = document
+                previous_document.status = "SUPERSEDED"
+            document.current_version_id = version.id
+            document.status = "RECEIVED"
+            document.updated_at = now
+            session.add(version)
+            evaluations = list(
+                session.scalars(
+                    select(RequirementEvaluationRow)
+                    .join(
+                        DocumentRequirementRow,
+                        DocumentRequirementRow.id == RequirementEvaluationRow.requirement_id,
+                    )
+                    .where(
+                        RequirementEvaluationRow.shipment_id == shipment_id,
+                        DocumentRequirementRow.document_type.in_({normalized_type, "INVOICE"})
+                        if normalized_type == "COMMERCIAL_INVOICE"
+                        else DocumentRequirementRow.document_type == normalized_type,
+                    )
+                )
+            )
+            for evaluation in evaluations:
+                evaluation.result = "PROVIDED"
+                evaluation.reason = "Evidence was uploaded; content checks are queued."
+                evaluation.evaluated_at = now
+            session.add(
+                ProcessingJobRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    shipment_id=shipment_id,
+                    job_type="EXTRACT_DOCUMENT",
+                    status="QUEUED",
+                    attempts=0,
+                    max_attempts=3,
+                    priority=60,
+                    payload_json=json.dumps({"document_id": document.id, "version_id": version.id}),
+                    queued_at=now,
+                    next_attempt_at=None,
+                )
+            )
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="document.uploaded",
+                    entity_type="document",
+                    entity_id=document.id,
+                    payload_json=json.dumps({"version": version.version, "sha256": sha256}),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            session.refresh(document)
+            session.refresh(version)
+            return row_dict(document) | {"version": row_dict(version, exclude={"storage_key"})}
+
+    def document_content_metadata(
+        self, *, organization_id: str, document_id: str, version: int | None = None
+    ) -> dict[str, Any]:
+        with self.session_factory() as session:
+            document = session.scalar(
+                select(ShipmentDocumentRow).where(
+                    ShipmentDocumentRow.id == document_id,
+                    ShipmentDocumentRow.organization_id == organization_id,
+                )
+            )
+            if document is None:
+                raise NotFoundError("Document was not found in this workspace.")
+            stmt = select(DocumentVersionRow).where(
+                DocumentVersionRow.document_id == document.id,
+                DocumentVersionRow.organization_id == organization_id,
+            )
+            if version is not None:
+                stmt = stmt.where(DocumentVersionRow.version == version)
+            else:
+                stmt = stmt.where(DocumentVersionRow.id == document.current_version_id)
+            current = session.scalar(stmt)
+            if current is None:
+                raise NotFoundError("Document version was not found.")
+            return row_dict(current) | {"document": row_dict(document)}
+
+    def complete_document_extraction(
+        self, *, organization_id: str, document_id: str, version_id: str
+    ) -> None:
+        """Mark an unconfigured extraction provider as explicitly reviewable."""
+        now = now_utc()
+        with self.session_factory() as session:
+            document = session.scalar(
+                select(ShipmentDocumentRow).where(
+                    ShipmentDocumentRow.id == document_id,
+                    ShipmentDocumentRow.organization_id == organization_id,
+                )
+            )
+            version = session.scalar(
+                select(DocumentVersionRow).where(
+                    DocumentVersionRow.id == version_id,
+                    DocumentVersionRow.organization_id == organization_id,
+                    DocumentVersionRow.document_id == document_id,
+                )
+            )
+            if document is None or version is None:
+                raise NotFoundError("The document version was not found in this workspace.")
+            version.extraction_status = "NEEDS_REVIEW"
+            version.extraction_provider = "NOT_CONFIGURED"
+            document.status = "REVIEW_REQUIRED"
+            document.updated_at = now
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="document.extraction.needs_review",
+                    entity_type="document",
+                    entity_id=document_id,
+                    payload_json=json.dumps(
+                        {"version_id": version_id, "provider": "NOT_CONFIGURED"}
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+
+    def save_trusted_reference(
+        self, *, organization_id: str, shipment_id: str, user: UserRow, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        now = now_utc()
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        content_hash = hashlib.sha256(canonical.encode()).hexdigest()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            from app.repositories.reconciliations import (
+                TrustedReferenceItemRow,
+                TrustedShipmentReferenceRow,
+            )
+
+            reference = session.scalar(
+                select(TrustedShipmentReferenceRow).where(
+                    TrustedShipmentReferenceRow.shipment_id == shipment_id,
+                    TrustedShipmentReferenceRow.organization_id == organization_id,
+                )
+            )
+            if reference is None:
+                reference = TrustedShipmentReferenceRow(
+                    id=str(uuid.uuid4()),
+                    shipment_id=shipment_id,
+                    organization_id=organization_id,
+                    version=1,
+                    source_type="MANUAL_AUTHORITATIVE_ENTRY",
+                    source_system="Workspace entry",
+                    retrieved_at=now,
+                )
+                session.add(reference)
+                session.flush()
+            else:
+                reference.version = (reference.version or 1) + 1
+                reference.retrieved_at = now
+            reference.order_reference = payload.get("order_reference")
+            reference.shipment_reference = (
+                payload.get("shipment_reference") or shipment.internal_reference
+            )
+            reference.expected_shipper = payload.get("expected_shipper")
+            reference.expected_recipient = payload.get("expected_recipient")
+            reference.expected_destination = (
+                payload.get("expected_destination") or shipment.destination
+            )
+            reference.expected_currency = payload.get("expected_currency")
+            reference.expected_total = payload.get("expected_total")
+            reference.source_system = str(payload.get("source_system") or "Workspace entry")
+            reference.source_type = str(payload.get("source_type") or "MANUAL_AUTHORITATIVE_ENTRY")
+            reference.source_record_id = payload.get("source_record_id")
+            reference.content_hash = content_hash
+            session.query(TrustedReferenceItemRow).filter(
+                TrustedReferenceItemRow.reference_id == reference.id
+            ).delete(synchronize_session=False)
+            for item in payload.get("items", []):
+                session.add(
+                    TrustedReferenceItemRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        reference_id=reference.id,
+                        sku=item.get("sku"),
+                        description=item.get("description"),
+                        quantity=item.get("quantity"),
+                        unit=item.get("unit"),
+                        unit_price=item.get("unit_price"),
+                        line_total=item.get("line_total"),
+                    )
+                )
+            comparison = self._trusted_comparison(
+                session, shipment, reference, payload.get("items", [])
+            )
+            check = AssuranceCheckRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                shipment_id=shipment_id,
+                check_type="TRUSTED_REFERENCE",
+                status="HOLD" if comparison["findings"] else "CLEAR",
+                severity="HIGH" if comparison["findings"] else "LOW",
+                summary=(
+                    "Trusted source conflicts require review."
+                    if comparison["findings"]
+                    else "Trusted source matches the shipment reference."
+                ),
+                details_json=json.dumps(comparison),
+                source="MANUAL_AUTHORITATIVE_ENTRY",
+                source_version=str(reference.version),
+                rule_pack_version="baseline-1",
+                started_at=now,
+                completed_at=now,
+                created_at=now,
+            )
+            session.add(check)
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="trusted_reference.updated",
+                    entity_type="shipment",
+                    entity_id=shipment_id,
+                    payload_json=json.dumps(
+                        {"version": reference.version, "content_hash": content_hash}
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            return {
+                "reference": row_dict(reference),
+                "comparison": comparison,
+                "check": row_dict(check),
+            }
+
+    @staticmethod
+    def _trusted_comparison(
+        session: Session, shipment: ShipmentCaseRow, reference: Any, items: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        findings: list[dict[str, Any]] = []
+        if reference.shipment_reference and reference.shipment_reference not in {
+            shipment.internal_reference,
+            shipment.external_reference,
+        }:
+            findings.append(
+                {"code": "TRUSTED_SHIPMENT_REFERENCE_MISMATCH", "field": "shipment_reference"}
+            )
+        if (
+            reference.expected_destination
+            and reference.expected_destination.casefold() != shipment.destination.casefold()
+        ):
+            findings.append({"code": "TRUSTED_DESTINATION_MISMATCH", "field": "destination"})
+        if (
+            reference.expected_currency
+            and shipment.currency
+            and reference.expected_currency.upper() != shipment.currency.upper()
+        ):
+            findings.append({"code": "TRUSTED_CURRENCY_MISMATCH", "field": "currency"})
+        if reference.expected_total is not None:
+            # A trusted total is compared only to the authoritative record supplied here;
+            # no fuzzy match is used to authorize release.
+            expected = float(reference.expected_total)
+            if expected < 0:
+                findings.append({"code": "TRUSTED_TOTAL_INVALID", "field": "total"})
+        if items:
+            supplied = {
+                str(item.get("sku")): float(item.get("quantity") or 0)
+                for item in items
+                if item.get("sku")
+            }
+            if not supplied:
+                findings.append({"code": "TRUSTED_SKU_MISSING", "field": "items"})
+        return {"findings": findings, "matched": not findings, "source_type": reference.source_type}
+
+    def run_assessment(
+        self, *, organization_id: str, shipment_id: str, user: UserRow
+    ) -> dict[str, Any]:
+        now = now_utc()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            shipment.assessment_started_at = now
+            shipment.status = ShipmentStatus.ASSESSING.value
+            shipment.updated_at = now
+            job = ProcessingJobRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                shipment_id=shipment_id,
+                job_type="ASSESS_SHIPMENT",
+                status="QUEUED",
+                attempts=0,
+                max_attempts=3,
+                priority=80,
+                payload_json=json.dumps({"shipment_id": shipment_id}),
+                queued_at=now,
+            )
+            session.add(job)
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="assessment.started",
+                    entity_type="shipment",
+                    entity_id=shipment_id,
+                    payload_json=json.dumps({"job_id": job.id}),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            return {"job_id": job.id, "shipment_id": shipment_id, "status": "QUEUED"}
+
+    def complete_assessment(self, *, organization_id: str, shipment_id: str) -> dict[str, Any]:
+        """Evaluate persisted deterministic inputs and write the assurance ledger."""
+        now = now_utc()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            evaluations = list(
+                session.execute(
+                    select(RequirementEvaluationRow, DocumentRequirementRow)
+                    .join(
+                        DocumentRequirementRow,
+                        DocumentRequirementRow.id == RequirementEvaluationRow.requirement_id,
+                    )
+                    .where(RequirementEvaluationRow.shipment_id == shipment_id)
+                )
+            )
+            missing = [
+                requirement.name
+                for evaluation, requirement in evaluations
+                if requirement.status in {"REQUIRED", "ACTIVE"}
+                and evaluation.result not in {"PROVIDED", "CLEAR", "NOT_APPLICABLE"}
+            ]
+            if missing:
+                session.add(
+                    AssuranceCheckRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        shipment_id=shipment_id,
+                        check_type="DOCUMENT_REQUIREMENTS",
+                        status="REVIEW",
+                        severity="HIGH",
+                        summary="Required documents are missing.",
+                        details_json=json.dumps({"missing": missing}),
+                        source="DEMO_BASELINE_RULE_PACK",
+                        source_version="baseline-1",
+                        rule_pack_version="baseline-1",
+                        started_at=now,
+                        completed_at=now,
+                        created_at=now,
+                    )
+                )
+            else:
+                session.add(
+                    AssuranceCheckRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        shipment_id=shipment_id,
+                        check_type="DOCUMENT_REQUIREMENTS",
+                        status="CLEAR",
+                        severity="LOW",
+                        summary="Required document evidence is present.",
+                        details_json="{}",
+                        source="DEMO_BASELINE_RULE_PACK",
+                        source_version="baseline-1",
+                        rule_pack_version="baseline-1",
+                        started_at=now,
+                        completed_at=now,
+                        created_at=now,
+                    )
+                )
+            dg_items = list(
+                session.scalars(
+                    select(ShipmentItemRow).where(
+                        ShipmentItemRow.shipment_id == shipment_id,
+                        ShipmentItemRow.dangerous_goods.is_(True),
+                    )
+                )
+            )
+            dg_incomplete = [
+                item.description
+                for item in dg_items
+                if not item.un_number or not item.proper_shipping_name or not item.hazard_class
+            ]
+            if dg_items:
+                session.add(
+                    AssuranceCheckRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        shipment_id=shipment_id,
+                        check_type="DANGEROUS_GOODS",
+                        status="HOLD" if dg_incomplete else "REVIEW",
+                        severity="HIGH" if dg_incomplete else "MEDIUM",
+                        summary=(
+                            "Dangerous-goods declarations are incomplete."
+                            if dg_incomplete
+                            else "Dangerous-goods evidence requires review."
+                        ),
+                        details_json=json.dumps({"incomplete_items": dg_incomplete}),
+                        source="GateGuard deterministic DG baseline",
+                        source_version="1",
+                        rule_pack_version="baseline-1",
+                        started_at=now,
+                        completed_at=now,
+                        created_at=now,
+                    )
+                )
+            factors: list[tuple[str, str]] = []
+            if missing:
+                factors.append(("MISSING_REQUIRED_DOCUMENT", ", ".join(missing)))
+            if dg_incomplete:
+                factors.append(("DANGEROUS_GOODS_INCOMPLETE", ", ".join(dg_incomplete)))
+            if any(
+                check.status in {"HOLD", "REVIEW"}
+                for check in session.scalars(
+                    select(AssuranceCheckRow).where(AssuranceCheckRow.shipment_id == shipment_id)
+                )
+            ):
+                factors.append(
+                    ("BLOCKING_ASSURANCE", "One or more assurance checks require review.")
+                )
+            assessment = calculate_risk(factors)
+            shipment.risk_score = assessment.score
+            shipment.risk_level = assessment.level.value
+            shipment.risk_factors_json = json.dumps(assessment.factors)
+            shipment.last_assessed_at = now
+            shipment.updated_at = now
+            shipment.status = (
+                ShipmentStatus.HOLD.value if dg_incomplete else ShipmentStatus.REVIEW_REQUIRED.value
+            )
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="assessment.completed",
+                    entity_type="shipment",
+                    entity_id=shipment_id,
+                    payload_json=json.dumps(
+                        {"risk_level": assessment.level.value, "risk_score": assessment.score}
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            return {
+                "shipment_id": shipment_id,
+                "risk_score": assessment.score,
+                "risk_level": assessment.level.value,
+                "factors": assessment.factors,
+            }
+
+    def run_screening(
+        self, *, organization_id: str, shipment_id: str, party_id: str | None = None, user: UserRow
+    ) -> dict[str, Any]:
+        now = now_utc()
+        with self.session_factory() as session:
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    ShipmentCaseRow.organization_id == organization_id,
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Shipment was not found in this workspace.")
+            party = session.scalar(
+                select(TradePartyRow)
+                .join(ShipmentPartyRow, ShipmentPartyRow.party_id == TradePartyRow.id)
+                .where(
+                    ShipmentPartyRow.shipment_id == shipment_id,
+                    TradePartyRow.organization_id == organization_id,
+                    *([TradePartyRow.id == party_id] if party_id else []),
+                )
+                .order_by(TradePartyRow.legal_name.asc())
+            )
+            if party is None:
+                raise GateGuardError(
+                    "Add a shipment party before running screening.",
+                    code="PARTY_REQUIRED",
+                    status_code=422,
+                )
+            run = ScreeningRunRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                shipment_id=shipment_id,
+                party_id=party.id,
+                provider="NOT_CONFIGURED",
+                dataset="NOT_CONFIGURED",
+                dataset_version="N/A",
+                screened_at=now,
+                result="NOT_CONFIGURED",
+                score=None,
+                matched_name=None,
+                matched_identifier=None,
+                disposition="NOT_CONFIGURED",
+                reviewed_by=None,
+                reviewed_at=None,
+            )
+            check = AssuranceCheckRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                shipment_id=shipment_id,
+                check_type="PARTY_SCREENING",
+                status="NOT_APPLICABLE",
+                severity="LOW",
+                summary="No screening provider is configured for this workspace.",
+                details_json=json.dumps({"party_id": party.id, "result": "NOT_CONFIGURED"}),
+                source="NOT_CONFIGURED",
+                source_version="N/A",
+                rule_pack_version="baseline-1",
+                started_at=now,
+                completed_at=now,
+                created_at=now,
+            )
+            session.add_all([run, check])
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="screening.completed",
+                    entity_type="shipment",
+                    entity_id=shipment_id,
+                    payload_json=json.dumps({"result": run.result, "party_id": party.id}),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            session.refresh(run)
+            return row_dict(run) | {"party_name": party.legal_name}
+
+    def heartbeat(
+        self,
+        *,
+        worker_id: str,
+        status: str,
+        version: str,
+        current_job_id: str | None = None,
+        safe_error: str | None = None,
+    ) -> None:
+        now = now_utc()
+        with self.session_factory() as session:
+            row = session.scalar(
+                select(WorkerHeartbeatRow).where(WorkerHeartbeatRow.worker_id == worker_id)
+            )
+            if row is None:
+                row = WorkerHeartbeatRow(
+                    id=str(uuid.uuid4()),
+                    worker_id=worker_id,
+                    status=status,
+                    version=version,
+                    current_job_id=current_job_id,
+                    safe_error=safe_error,
+                    started_at=now,
+                    last_heartbeat_at=now,
+                )
+                session.add(row)
+            else:
+                row.status = status
+                row.version = version
+                row.current_job_id = current_job_id
+                row.safe_error = safe_error
+                row.last_heartbeat_at = now
+            session.commit()
+
+    def claim_job(self, *, worker_id: str) -> dict[str, Any] | None:
+        now = now_utc()
+        with self.session_factory() as session:
+            stmt = (
+                select(ProcessingJobRow)
+                .where(
+                    ProcessingJobRow.status == "QUEUED",
+                    or_(
+                        ProcessingJobRow.next_attempt_at.is_(None),
+                        ProcessingJobRow.next_attempt_at <= now,
+                    ),
+                )
+                .order_by(ProcessingJobRow.priority.desc(), ProcessingJobRow.queued_at.asc())
+                .limit(1)
+            )
+            if not self.engine.url.drivername.startswith("sqlite"):
+                stmt = stmt.with_for_update(skip_locked=True)
+            job = session.scalar(stmt)
+            if job is None:
+                return None
+            job.status = "RUNNING"
+            job.attempts += 1
+            job.started_at = now
+            job.heartbeat_at = now
+            session.commit()
+            return row_dict(job)
+
+    def finish_job(
+        self,
+        *,
+        job_id: str,
+        success: bool,
+        error_code: str | None = None,
+        safe_error: str | None = None,
+    ) -> None:
+        now = now_utc()
+        with self.session_factory() as session:
+            job = session.get(ProcessingJobRow, job_id)
+            if job is None:
+                return
+            job.completed_at = now if success else None
+            job.heartbeat_at = now
+            if success:
+                job.status = "SUCCEEDED"
+                job.error_code = None
+                job.safe_error = None
+            elif job.attempts >= job.max_attempts:
+                job.status = "DEAD_LETTER"
+                job.error_code = error_code or "JOB_FAILED"
+                job.safe_error = safe_error or "The job exceeded its retry limit."
+                job.completed_at = now
+            else:
+                job.status = "QUEUED"
+                job.error_code = error_code or "JOB_RETRY"
+                job.safe_error = safe_error or "The job will be retried."
+                job.next_attempt_at = now + timedelta(
+                    seconds=min(300, 2 ** max(job.attempts, 1) * 5)
+                )
+            session.commit()
 
     def approve_release(
         self, *, organization_id: str, release_decision_id: str, user: UserRow, comment: str
@@ -1849,6 +2786,25 @@ class OperationsRepository:
                 approved_at=now,
             )
             session.add(row)
+            if decision.decision == "AUTHORIZE":
+                shipment = session.get(ShipmentCaseRow, decision.shipment_id)
+                if shipment is not None:
+                    shipment.status = ShipmentStatus.RELEASE_AUTHORIZED.value
+                    shipment.release_authorized_at = now
+                    shipment.updated_at = now
+                    session.add(
+                        DomainEventRow(
+                            id=str(uuid.uuid4()),
+                            organization_id=organization_id,
+                            event_type="release.authorized",
+                            entity_type="shipment",
+                            entity_id=shipment.id,
+                            payload_json=json.dumps(
+                                {"decision_id": decision.id, "four_eyes": True}
+                            ),
+                            created_at=now,
+                        )
+                    )
             session.commit()
             session.refresh(row)
             return row_dict(row) | {"approver_name": user.display_name}
@@ -1856,11 +2812,8 @@ class OperationsRepository:
     def transition_shipment(
         self, *, organization_id: str, shipment_id: str, user: UserRow, status: str
     ) -> dict[str, Any]:
-        transitions = {
-            ShipmentStatus.RELEASE_AUTHORIZED.value: {ShipmentStatus.DISPATCHED.value},
-            ShipmentStatus.DISPATCHED.value: {ShipmentStatus.CLOSED.value},
-            ShipmentStatus.HOLD.value: {ShipmentStatus.REVIEW_REQUIRED.value},
-        }
+        from app.services.assurance import can_transition
+
         now = now_utc()
         with self.session_factory() as session:
             shipment = session.scalar(
@@ -1872,7 +2825,7 @@ class OperationsRepository:
             if shipment is None:
                 raise NotFoundError("Shipment was not found in this workspace.")
             previous_status = shipment.status
-            if status not in transitions.get(shipment.status, set()):
+            if not can_transition(shipment.status, status):
                 raise GateGuardError(
                     f"Shipment cannot move from {shipment.status} to {status}.",
                     code="INVALID_TRANSITION",

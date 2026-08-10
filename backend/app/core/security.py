@@ -101,5 +101,17 @@ def install_security_middleware(app, settings: Settings) -> None:
                     _error(401, "UNAUTHORIZED", "Missing or invalid API key.", request_id)
                 )
 
+        unsafe_method = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        origin = request.headers.get("origin")
+        if unsafe_method and origin and origin not in settings.cors_origins:
+            return secure(
+                _error(
+                    403,
+                    "CSRF_ORIGIN_REJECTED",
+                    "The request origin is not allowed.",
+                    request_id,
+                )
+            )
+
         response = await call_next(request)
         return secure(response)

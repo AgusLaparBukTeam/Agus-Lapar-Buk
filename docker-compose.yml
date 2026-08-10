@@ -8,6 +8,7 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/gateguard.db
       CORS_ORIGINS: http://localhost:3000
+      DOCUMENT_STORAGE_ROOT: /data/documents
     # Loopback-only: the browser should reach the API through the Next.js BFF.
     ports:
       - "127.0.0.1:8000:8000"
@@ -25,6 +26,29 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:////data/gateguard.db
+      DOCUMENT_STORAGE_ROOT: /data/documents
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - gateguard-data:/data
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
 
   frontend:

@@ -17,6 +17,7 @@ coverage/
 .coverage
 playwright-report/
 test-results/
+.playwright-cli/
 uploads/
 *.log
 .DS_Store

@@ -58,7 +58,7 @@ cp .env.production.example .env
 docker compose -f docker-compose.prod.yml up --build
 ```
 
-The containers run as non-root users with Linux capabilities dropped. The backend uses temporary filesystem storage for uploaded document processing.
+The containers run as non-root users with Linux capabilities dropped. Uploaded document bytes are stored in the named `gateguard-documents` volume, shared by the backend and worker. Back up and retain this volume together with PostgreSQL, or replace the storage boundary with an approved object-storage adapter before scaling out.
 
 ## Dependency locking
 
@@ -91,7 +91,7 @@ Before exposing GateGuard outside a trusted development environment:
 
 Shipment documents can contain customer and commercial data. Define retention and access policies before using real documents.
 
-Raw uploads are not persisted by default, but external extraction providers may have their own processing and retention terms. Review those terms before enabling a provider for production data.
+Uploaded documents are persisted in the configured document volume and should be covered by the organization retention and backup policy. External extraction providers may have their own processing and retention terms; review those terms before enabling a provider for production data.
 
 ## Backups
 
