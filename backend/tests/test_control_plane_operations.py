@@ -119,3 +119,37 @@ def test_document_vault_trusted_source_screening_and_worker_flow():
     observability = client.get("/api/observability")
     assert observability.status_code == 200
     assert observability.json()["jobs_succeeded"] >= 1
+
+
+def test_reference_data_notifications_and_webhook_boundaries():
+    client = login(TestClient(app))
+    created = client.post(
+        "/api/reference-data",
+        json={
+            "category": "currency",
+            "code": "IDR",
+            "label": "Indonesian rupiah",
+            "source": "Workspace finance policy",
+            "version": "2026-01",
+        },
+    )
+    assert created.status_code == 201, created.text
+    listed = client.get("/api/reference-data?category=CURRENCY&q=IDR")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["code"] == "IDR"
+
+    duplicate = client.post(
+        "/api/reference-data",
+        json={"category": "currency", "code": "IDR", "label": "Duplicate"},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+
+    notification = client.get("/api/notifications")
+    assert notification.status_code == 200, notification.text
+    assert "unread" in notification.json()
+
+    private_webhook = client.post(
+        "/api/integrations/webhooks",
+        json={"name": "Private callback", "endpoint": "http://10.0.0.4/events", "events": []},
+    )
+    assert private_webhook.status_code == 422, private_webhook.text

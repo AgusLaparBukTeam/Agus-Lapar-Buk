@@ -79,6 +79,19 @@ class ServiceAccountPayload(BaseModel):
     scopes: list[str] = Field(default_factory=lambda: ["shipment.read"], max_length=20)
 
 
+class ReferenceDataPayload(BaseModel):
+    category: str = Field(min_length=2, max_length=40)
+    code: str = Field(min_length=1, max_length=80)
+    label: str = Field(min_length=1, max_length=200)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    source: str = Field(default="Workspace maintained", min_length=2, max_length=160)
+    version: str = Field(default="1", min_length=1, max_length=40)
+
+
+class RuleSimulationPayload(BaseModel):
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
 class DocumentMetadataPayload(BaseModel):
     shipment_id: str = Field(min_length=1, max_length=36)
     document_type: str = Field(min_length=2, max_length=48)
@@ -345,11 +358,19 @@ def documents(
     request: Request,
     q: str | None = None,
     status: str | None = None,
+    document_type: str | None = None,
+    extraction_status: str | None = None,
     user: UserRow = Depends(current_user),
 ):
     org = organization(request, user)
     return {
-        "items": get_operations().list_documents(organization_id=org.id, query=q, status=status)
+        "items": get_operations().list_documents(
+            organization_id=org.id,
+            query=q,
+            status=status,
+            document_type=document_type,
+            extraction_status=extraction_status,
+        )
     }
 
 
@@ -885,31 +906,92 @@ def rule_packs(request: Request, user: UserRow = Depends(current_user)):
         }
 
 
-@router.get("/api/notifications")
-def notifications(request: Request, user: UserRow = Depends(current_user)):
+@router.get("/api/rule-packs/{rule_pack_id}")
+def rule_pack_detail(rule_pack_id: str, request: Request, user: UserRow = Depends(current_user)):
     org = organization(request, user)
-    with get_operations().session_factory() as session:
-        from sqlalchemy import select
+    return get_operations().rule_pack_detail(organization_id=org.id, rule_pack_id=rule_pack_id)
 
-        from app.repositories.operations import NotificationRow
 
-        rows = list(
-            session.scalars(
-                select(NotificationRow)
-                .where(
-                    NotificationRow.organization_id == org.id, NotificationRow.user_id == user.id
-                )
-                .order_by(NotificationRow.created_at.desc())
-                .limit(50)
-            )
+@router.post("/api/rule-packs/{rule_pack_id}/publish")
+def publish_rule_pack(
+    rule_pack_id: str,
+    request: Request,
+    user: UserRow = Depends(require_role("admin")),
+):
+    org = organization(request, user)
+    result = get_operations().publish_rule_pack(
+        organization_id=org.id, rule_pack_id=rule_pack_id, user=user
+    )
+    audit(request, "rule_pack.published", "rule_pack", rule_pack_id, user)
+    return result
+
+
+@router.post("/api/rule-packs/{rule_pack_id}/simulate")
+def simulate_rule_pack(
+    rule_pack_id: str,
+    payload: RuleSimulationPayload,
+    request: Request,
+    user: UserRow = Depends(current_user),
+):
+    org = organization(request, user)
+    return get_operations().simulate_rule_pack(
+        organization_id=org.id, rule_pack_id=rule_pack_id, input_data=payload.input
+    )
+
+
+@router.get("/api/reference-data")
+def reference_data(
+    request: Request,
+    category: str | None = None,
+    q: str | None = None,
+    active_only: bool = True,
+    user: UserRow = Depends(current_user),
+):
+    org = organization(request, user)
+    return {
+        "items": get_operations().list_reference_data(
+            organization_id=org.id,
+            category=category,
+            query=q,
+            active_only=active_only,
         )
-        return {
-            "unread": sum(row.read_at is None for row in rows),
-            "items": [
-                {column.name: getattr(row, column.name) for column in row.__table__.columns}
-                for row in rows
-            ],
-        }
+    }
+
+
+@router.post("/api/reference-data", status_code=201)
+def create_reference_data(
+    payload: ReferenceDataPayload,
+    request: Request,
+    user: UserRow = Depends(require_role("admin")),
+):
+    org = organization(request, user)
+    result = get_operations().create_reference_data(
+        organization_id=org.id, user=user, payload=payload.model_dump()
+    )
+    audit(request, "reference_data.created", "reference_data", result["id"], user)
+    return result
+
+
+@router.get("/api/notifications")
+def notifications(
+    request: Request,
+    unread_only: bool = False,
+    user: UserRow = Depends(current_user),
+):
+    org = organization(request, user)
+    return get_operations().list_notifications(
+        organization_id=org.id, user_id=user.id, unread_only=unread_only
+    )
+
+
+@router.patch("/api/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: str, request: Request, user: UserRow = Depends(current_user)
+):
+    org = organization(request, user)
+    return get_operations().mark_notification_read(
+        organization_id=org.id, user_id=user.id, notification_id=notification_id
+    )
 
 
 @router.post("/api/integrations/service-accounts", status_code=201)

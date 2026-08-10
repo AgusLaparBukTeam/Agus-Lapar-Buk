@@ -43,7 +43,7 @@ class AssuranceWorker:
                 version_id=str(payload["version_id"]),
             )
         elif job_type in {"SCREEN_PARTY", "SEND_WEBHOOK", "ESCALATE_TASKS"}:
-            LOGGER.info("No provider-specific handler configured for %s", job_type)
+            raise RuntimeError(f"No provider-specific handler configured for {job_type}")
         else:
             raise ValueError(f"Unsupported processing job type: {job_type}")
 

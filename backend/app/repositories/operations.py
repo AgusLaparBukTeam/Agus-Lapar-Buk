@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import (
     Boolean,
@@ -21,6 +23,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.core.config import get_settings
 from app.core.errors import GateGuardError, NotFoundError
 from app.domain.models import ShipmentStatus, UserRole
 from app.repositories.reconciliations import (
@@ -35,6 +38,56 @@ from app.services.assurance import calculate_risk
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def validate_webhook_endpoint(endpoint: str, *, production: bool) -> str:
+    parsed = urlparse(endpoint.strip())
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+        raise GateGuardError(
+            "Webhook endpoints must use a valid HTTPS URL.",
+            code="INVALID_WEBHOOK_ENDPOINT",
+            status_code=422,
+        )
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise GateGuardError(
+            "Webhook endpoints cannot contain credentials, query strings, or fragments.",
+            code="INVALID_WEBHOOK_ENDPOINT",
+            status_code=422,
+        )
+    host = parsed.hostname.casefold().rstrip(".")
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    if production and parsed.scheme != "https":
+        raise GateGuardError(
+            "Webhook endpoints must use HTTPS in production.",
+            code="INVALID_WEBHOOK_ENDPOINT",
+            status_code=422,
+        )
+    if host in local_hosts and production:
+        raise GateGuardError(
+            "Local webhook endpoints are not allowed in production.",
+            code="INVALID_WEBHOOK_ENDPOINT",
+            status_code=422,
+        )
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if (
+        address
+        and (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+        )
+        and (production or host not in local_hosts)
+    ):
+        raise GateGuardError(
+            "Private or reserved webhook addresses are not allowed.",
+            code="INVALID_WEBHOOK_ENDPOINT",
+            status_code=422,
+        )
+    return endpoint.strip()
 
 
 class OrganizationRow(Base):
@@ -587,6 +640,24 @@ class WorkspaceSettingRow(Base):
     setting_key: Mapped[str] = mapped_column(String(100), index=True)
     value_json: Mapped[str] = mapped_column(Text)
     updated_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ReferenceDataRow(Base):
+    __tablename__ = "reference_data"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    code: Mapped[str] = mapped_column(String(80), index=True)
+    label: Mapped[str] = mapped_column(String(200))
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    source: Mapped[str] = mapped_column(String(160))
+    version: Mapped[str] = mapped_column(String(40))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -1307,6 +1378,9 @@ class OperationsRepository:
         organization_id: str,
         query: str | None = None,
         status: str | None = None,
+        document_type: str | None = None,
+        extraction_status: str | None = None,
+        shipment_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         with self.session_factory() as session:
@@ -1325,6 +1399,10 @@ class OperationsRepository:
                 )
             if status:
                 stmt = stmt.where(ShipmentDocumentRow.status == status)
+            if document_type:
+                stmt = stmt.where(ShipmentDocumentRow.document_type == document_type.upper())
+            if shipment_id:
+                stmt = stmt.where(ShipmentDocumentRow.shipment_id == shipment_id)
             rows = list(
                 session.execute(
                     stmt.order_by(ShipmentDocumentRow.updated_at.desc()).limit(
@@ -1343,13 +1421,16 @@ class OperationsRepository:
                     if document.current_version_id
                     else None
                 )
-                output.append(
-                    {
-                        **row_dict(document),
-                        "shipment_reference": shipment.internal_reference,
-                        "version": row_dict(version, exclude={"storage_key"}) if version else None,
-                    }
-                )
+                item = {
+                    **row_dict(document),
+                    "shipment_reference": shipment.internal_reference,
+                    "version": row_dict(version, exclude={"storage_key"}) if version else None,
+                }
+                if extraction_status and (
+                    not version or version.extraction_status != extraction_status
+                ):
+                    continue
+                output.append(item)
             return output
 
     def detail(self, *, organization_id: str, shipment_id: str) -> dict[str, Any]:
@@ -1369,8 +1450,7 @@ class OperationsRepository:
                     .where(ShipmentPartyRow.shipment_id == shipment_id)
                 )
             )
-            documents = self.list_documents(organization_id=organization_id)
-            docs = [item for item in documents if item["shipment_id"] == shipment_id]
+            docs = self.list_documents(organization_id=organization_id, shipment_id=shipment_id)
             items = [
                 row_dict(row)
                 for row in session.scalars(
@@ -1627,6 +1707,225 @@ class OperationsRepository:
                 for row in rows
             ]
 
+    def list_reference_data(
+        self,
+        *,
+        organization_id: str,
+        category: str | None = None,
+        query: str | None = None,
+        active_only: bool = True,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        with self.session_factory() as session:
+            stmt = select(ReferenceDataRow).where(
+                ReferenceDataRow.organization_id == organization_id
+            )
+            if category:
+                stmt = stmt.where(ReferenceDataRow.category == category.upper())
+            if active_only:
+                stmt = stmt.where(ReferenceDataRow.active.is_(True))
+            if query:
+                term = f"%{query.strip()}%"
+                stmt = stmt.where(
+                    or_(ReferenceDataRow.code.like(term), ReferenceDataRow.label.like(term))
+                )
+            rows = session.scalars(
+                stmt.order_by(ReferenceDataRow.category.asc(), ReferenceDataRow.code.asc()).limit(
+                    max(1, min(limit, 500))
+                )
+            )
+            return [
+                {**row_dict(row), "metadata": json.loads(row.metadata_json or "{}")} for row in rows
+            ]
+
+    def create_reference_data(
+        self, *, organization_id: str, user: UserRow, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        category = str(payload["category"]).strip().upper()
+        code = str(payload["code"]).strip().upper()
+        label = " ".join(str(payload["label"]).split())
+        if not category or not code or not label:
+            raise GateGuardError(
+                "Category, code, and label are required.",
+                code="VALIDATION_ERROR",
+                status_code=422,
+            )
+        now = now_utc()
+        with self.session_factory() as session:
+            duplicate = session.scalar(
+                select(ReferenceDataRow).where(
+                    ReferenceDataRow.organization_id == organization_id,
+                    ReferenceDataRow.category == category,
+                    ReferenceDataRow.code == code,
+                )
+            )
+            if duplicate:
+                raise GateGuardError(
+                    "That reference code already exists in this category.",
+                    code="DUPLICATE_REFERENCE_DATA",
+                    status_code=409,
+                )
+            row = ReferenceDataRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization_id,
+                category=category,
+                code=code,
+                label=label,
+                metadata_json=json.dumps(payload.get("metadata", {})),
+                source=str(payload.get("source") or "Workspace maintained").strip(),
+                version=str(payload.get("version") or "1").strip(),
+                active=True,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="reference_data.created",
+                    entity_type="reference_data",
+                    entity_id=row.id,
+                    payload_json=json.dumps({"category": category, "code": code}),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            session.refresh(row)
+            return {**row_dict(row), "metadata": json.loads(row.metadata_json)}
+
+    def rule_pack_detail(self, *, organization_id: str, rule_pack_id: str) -> dict[str, Any]:
+        with self.session_factory() as session:
+            pack = session.scalar(
+                select(RulePackRow).where(
+                    RulePackRow.id == rule_pack_id,
+                    or_(
+                        RulePackRow.organization_id == organization_id,
+                        RulePackRow.organization_id.is_(None),
+                    ),
+                )
+            )
+            if pack is None:
+                raise NotFoundError("Rule pack was not found in this workspace.")
+            rules = list(
+                session.scalars(
+                    select(RuleDefinitionRow)
+                    .where(RuleDefinitionRow.rule_pack_id == pack.id)
+                    .order_by(RuleDefinitionRow.rule_id.asc())
+                )
+            )
+            return {
+                "rule_pack": row_dict(pack),
+                "rules": [
+                    {**row_dict(rule), "condition": json.loads(rule.condition_json or "{}")}
+                    for rule in rules
+                ],
+            }
+
+    def publish_rule_pack(
+        self, *, organization_id: str, rule_pack_id: str, user: UserRow
+    ) -> dict[str, Any]:
+        now = now_utc()
+        with self.session_factory() as session:
+            pack = session.scalar(
+                select(RulePackRow).where(
+                    RulePackRow.id == rule_pack_id,
+                    or_(
+                        RulePackRow.organization_id == organization_id,
+                        RulePackRow.organization_id.is_(None),
+                    ),
+                )
+            )
+            if pack is None:
+                raise NotFoundError("Rule pack was not found in this workspace.")
+            if pack.status == "PUBLISHED":
+                raise GateGuardError(
+                    "Published rule packs are immutable.",
+                    code="IMMUTABLE_RULE_PACK",
+                    status_code=409,
+                )
+            pack.status = "PUBLISHED"
+            pack.published_by = user.id
+            pack.published_at = now
+            pack.updated_at = now
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization_id,
+                    event_type="rule_pack.published",
+                    entity_type="rule_pack",
+                    entity_id=pack.id,
+                    payload_json=json.dumps({"version": pack.version}),
+                    created_at=now,
+                )
+            )
+            session.commit()
+            session.refresh(pack)
+            return row_dict(pack)
+
+    def simulate_rule_pack(
+        self, *, organization_id: str, rule_pack_id: str, input_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        detail = self.rule_pack_detail(organization_id=organization_id, rule_pack_id=rule_pack_id)
+        context = input_data or {}
+        results = []
+        for rule in detail["rules"]:
+            condition = rule["condition"]
+            matches = all(context.get(str(key)) == value for key, value in condition.items())
+            results.append(
+                {
+                    "rule_id": rule["rule_id"],
+                    "matched": matches,
+                    "result": "APPLIES" if matches else "NOT_APPLICABLE",
+                }
+            )
+        return {"rule_pack": detail["rule_pack"], "results": results, "mutated": False}
+
+    def list_notifications(
+        self, *, organization_id: str, user_id: str, unread_only: bool = False, limit: int = 50
+    ) -> dict[str, Any]:
+        with self.session_factory() as session:
+            stmt = select(NotificationRow).where(
+                NotificationRow.organization_id == organization_id,
+                NotificationRow.user_id == user_id,
+            )
+            if unread_only:
+                stmt = stmt.where(NotificationRow.read_at.is_(None))
+            rows = list(
+                session.scalars(
+                    stmt.order_by(NotificationRow.created_at.desc()).limit(max(1, min(limit, 100)))
+                )
+            )
+            unread = (
+                session.scalar(
+                    select(func.count(NotificationRow.id)).where(
+                        NotificationRow.organization_id == organization_id,
+                        NotificationRow.user_id == user_id,
+                        NotificationRow.read_at.is_(None),
+                    )
+                )
+                or 0
+            )
+            return {"unread": int(unread), "items": [row_dict(row) for row in rows]}
+
+    def mark_notification_read(
+        self, *, organization_id: str, user_id: str, notification_id: str
+    ) -> dict[str, Any]:
+        with self.session_factory() as session:
+            row = session.scalar(
+                select(NotificationRow).where(
+                    NotificationRow.id == notification_id,
+                    NotificationRow.organization_id == organization_id,
+                    NotificationRow.user_id == user_id,
+                )
+            )
+            if row is None:
+                raise NotFoundError("Notification was not found in this workspace.")
+            row.read_at = row.read_at or now_utc()
+            session.commit()
+            session.refresh(row)
+            return row_dict(row)
+
     def settings(self, *, organization_id: str) -> dict[str, Any]:
         with self.session_factory() as session:
             organization = session.get(OrganizationRow, organization_id)
@@ -1705,11 +2004,14 @@ class OperationsRepository:
     def create_webhook(self, *, organization_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         secret = secrets.token_urlsafe(32)
         now = now_utc()
+        endpoint = validate_webhook_endpoint(
+            str(payload["endpoint"]), production=get_settings().app_env.casefold() == "production"
+        )
         row = WebhookSubscriptionRow(
             id=str(uuid.uuid4()),
             organization_id=organization_id,
             name=str(payload["name"]).strip(),
-            endpoint=str(payload["endpoint"]).strip(),
+            endpoint=endpoint,
             events_json=json.dumps(payload.get("events", [])),
             secret_hash=hashlib.sha256(secret.encode()).hexdigest(),
             enabled=True,
@@ -2336,6 +2638,30 @@ class OperationsRepository:
                     created_at=now,
                 )
             )
+            stale_release = session.scalar(
+                select(ReleaseDecisionRow)
+                .where(
+                    ReleaseDecisionRow.shipment_id == shipment_id,
+                    ReleaseDecisionRow.decision == "AUTHORIZE",
+                    ReleaseDecisionRow.invalidated_at.is_(None),
+                )
+                .order_by(ReleaseDecisionRow.created_at.desc())
+            )
+            if stale_release is not None:
+                stale_release.invalidated_at = now
+                if shipment.status == ShipmentStatus.RELEASE_AUTHORIZED.value:
+                    shipment.status = ShipmentStatus.RELEASE_INVALIDATED.value
+                session.add(
+                    DomainEventRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        event_type="release.invalidated",
+                        entity_type="shipment",
+                        entity_id=shipment_id,
+                        payload_json=json.dumps({"reason": "trusted_reference_changed"}),
+                        created_at=now,
+                    )
+                )
             session.commit()
             return {
                 "reference": row_dict(reference),
