@@ -1,6 +1,6 @@
 "use client";
 
-import { ClockCounterClockwise } from "@phosphor-icons/react";
+import { ClockCounterClockwiseIcon as ClockCounterClockwise } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";

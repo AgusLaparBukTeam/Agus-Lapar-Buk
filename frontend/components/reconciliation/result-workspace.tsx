@@ -1,6 +1,6 @@
 "use client";
 
-import { CaretDown, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { CaretDownIcon as CaretDown, ShieldCheckIcon as ShieldCheck, WarningCircleIcon as WarningCircle } from "@phosphor-icons/react";
 import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";

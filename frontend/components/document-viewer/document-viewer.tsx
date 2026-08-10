@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, MagnifyingGlassMinus, MagnifyingGlassPlus } from "@phosphor-icons/react";
+import { FileTextIcon as FileText, MagnifyingGlassMinusIcon as MagnifyingGlassMinus, MagnifyingGlassPlusIcon as MagnifyingGlassPlus } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DocumentType, EvidenceRegion } from "@/lib/types";

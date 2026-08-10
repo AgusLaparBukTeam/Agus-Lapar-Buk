@@ -25,6 +25,7 @@ from app.domain.models import (
     PaginatedReconciliations,
     PaginatedShipments,
     PaginatedWorkQueue,
+    PasswordChangeRequest,
     ReconciliationResult,
     ReconciliationStatus,
     ReleaseDecisionRequest,
@@ -60,6 +61,12 @@ def get_service() -> ReconciliationService:
     return ReconciliationService(
         settings=settings, repository=get_repository(), extractor=ExtractionRouter(settings)
     )
+
+
+def get_workspace(request: Request, user: UserRow):
+    from app.api.operations import get_operations
+
+    return get_operations().organization_for(user, request.headers.get("x-gateguard-organization"))
 
 
 def user_response(user: UserRow) -> UserResponse:
@@ -111,6 +118,7 @@ def login(body: LoginRequest, request: Request, response: Response):
         "user",
         entity_id=user.id,
         actor=user,
+        organization_id=get_workspace(request, user).id,
         request_id=request.state.request_id,
     )
     return user_response(user)
@@ -135,6 +143,22 @@ def logout(request: Request, response: Response):
 @router.get("/api/auth/me", response_model=UserResponse)
 def me(user: UserRow = Depends(current_user)):
     return user_response(user)
+
+
+@router.post("/api/auth/password", response_model=UserResponse)
+def change_password(
+    body: PasswordChangeRequest,
+    user: UserRow = Depends(current_user),
+):
+    from app.auth.passwords import verify_password
+
+    if not verify_password(user.password_hash, body.current_password):
+        raise GateGuardError(
+            "Current password is incorrect.", code="INVALID_CREDENTIALS", status_code=401
+        )
+    return user_response(
+        get_repository().change_password(user.id, require_password(body.new_password))
+    )
 
 
 @router.post("/api/reconcile", response_model=ReconciliationResult)
@@ -164,14 +188,31 @@ async def reconcile_documents(
         "reconciliation",
         entity_id=result.session_id,
         actor=user,
+        organization_id=get_workspace(request, user).id,
         metadata={"status": result.status.value, "processing_ms": result.processing_ms},
         request_id=request.state.request_id,
+    )
+    shipment_document = result.documents.get(DocumentType.DELIVERY_ORDER)
+    shipment_id = (
+        str(shipment_document.shipment_id.value)
+        if shipment_document and shipment_document.shipment_id.value is not None
+        else None
+    )
+    workspace = get_workspace(request, user)
+    from app.api.operations import get_operations
+
+    get_operations().record_reconciliation_check(
+        organization_id=workspace.id,
+        shipment_id=shipment_id,
+        user=user,
+        result=result,
     )
     return result
 
 
 @router.get("/api/reconciliations", response_model=PaginatedReconciliations)
 def list_reconciliations(
+    request: Request,
     page: int = 1,
     page_size: int = 25,
     status: str | None = None,
@@ -179,7 +220,7 @@ def list_reconciliations(
     date_to: str | None = None,
     overridden: bool | None = None,
     query: str | None = None,
-    _: UserRow = Depends(current_user),
+    user: UserRow = Depends(current_user),
 ):
     if not 1 <= page <= 100_000 or not 1 <= page_size <= 100:
         raise GateGuardError("Invalid pagination values.", code="VALIDATION_ERROR", status_code=422)
@@ -202,13 +243,14 @@ def list_reconciliations(
         date_to=end,
         overridden=overridden,
         query=query,
+        organization_id=get_workspace(request, user).id,
     )
     return PaginatedReconciliations(items=items, page=page, page_size=page_size, total=total)
 
 
 @router.get("/api/reconciliations/{session_id}", response_model=ReconciliationResult)
-def get_reconciliation(session_id: str, _: UserRow = Depends(current_user)):
-    return get_repository().get(session_id)
+def get_reconciliation(session_id: str, request: Request, user: UserRow = Depends(current_user)):
+    return get_repository().get(session_id, organization_id=get_workspace(request, user).id)
 
 
 @router.post("/api/reconciliations/{session_id}/override", response_model=ReconciliationResult)
@@ -219,16 +261,21 @@ def override_reconciliation(
     user: UserRow = Depends(require_role("supervisor", "admin")),
 ):
     return get_repository().override(
-        session_id, body, actor_user=user, request_id=request.state.request_id
+        session_id,
+        body,
+        actor_user=user,
+        request_id=request.state.request_id,
+        organization_id=get_workspace(request, user).id,
     )
 
 
 @router.get("/api/dashboard/summary", response_model=DashboardSummary)
-def dashboard(_: UserRow = Depends(current_user)):
+def dashboard(request: Request, user: UserRow = Depends(current_user)):
     today = datetime.now(UTC).date()
     summary = get_repository().dashboard(
         datetime.combine(today, time.min, UTC),
         datetime.combine(today + timedelta(days=1), time.min, UTC),
+        organization_id=get_workspace(request, user).id,
     )
     return DashboardSummary(
         date=today.isoformat(),
@@ -239,11 +286,12 @@ def dashboard(_: UserRow = Depends(current_user)):
 
 @router.get("/api/shipments", response_model=PaginatedShipments)
 def list_shipments(
+    request: Request,
     page: int = 1,
     page_size: int = 25,
     status: str | None = None,
     query: str | None = None,
-    _: UserRow = Depends(current_user),
+    user: UserRow = Depends(current_user),
 ):
     if not 1 <= page <= 100_000 or not 1 <= page_size <= 100:
         raise GateGuardError("Invalid pagination values.", code="VALIDATION_ERROR", status_code=422)
@@ -254,6 +302,7 @@ def list_shipments(
         page_size=page_size,
         status=status,
         query=query,
+        organization_id=get_workspace(request, user).id,
     )
     return PaginatedShipments(items=items, page=page, page_size=page_size, total=total)
 
@@ -270,6 +319,7 @@ def create_shipment(
         "shipment",
         entity_id=shipment["id"],
         actor=user,
+        organization_id=get_workspace(request, user).id,
         metadata={"status": shipment["status"]},
         request_id=request.state.request_id,
     )
@@ -277,18 +327,21 @@ def create_shipment(
 
 
 @router.get("/api/shipments/{shipment_id}", response_model=ShipmentResponse)
-def get_shipment(shipment_id: str, _: UserRow = Depends(current_user)):
-    return ShipmentResponse.model_validate(get_repository().get_shipment(shipment_id))
+def get_shipment(shipment_id: str, request: Request, user: UserRow = Depends(current_user)):
+    return ShipmentResponse.model_validate(
+        get_repository().get_shipment(shipment_id, organization_id=get_workspace(request, user).id)
+    )
 
 
 @router.get("/api/work-queue", response_model=PaginatedWorkQueue)
 def work_queue(
+    request: Request,
     page: int = 1,
     page_size: int = 25,
     status: str | None = None,
     priority: str | None = None,
     assignee: str | None = None,
-    _: UserRow = Depends(current_user),
+    user: UserRow = Depends(current_user),
 ):
     if not 1 <= page <= 100_000 or not 1 <= page_size <= 100:
         raise GateGuardError("Invalid pagination values.", code="VALIDATION_ERROR", status_code=422)
@@ -298,6 +351,7 @@ def work_queue(
         status=status,
         priority=priority,
         assignee=assignee,
+        organization_id=get_workspace(request, user).id,
     )
     return PaginatedWorkQueue(items=items, page=page, page_size=page_size, total=total)
 
@@ -309,12 +363,18 @@ def update_work_queue(
     request: Request,
     user: UserRow = Depends(current_user),
 ):
-    item = get_repository().update_work_task(task_id, status=body.status.value, actor=user)
+    item = get_repository().update_work_task(
+        task_id,
+        status=body.status.value,
+        actor=user,
+        organization_id=get_workspace(request, user).id,
+    )
     get_repository().record_audit(
         "work_queue.updated",
         "review_task",
         entity_id=task_id,
         actor=user,
+        organization_id=get_workspace(request, user).id,
         metadata={"status": body.status.value},
         request_id=request.state.request_id,
     )
@@ -331,13 +391,18 @@ def release_decision(
     user: UserRow = Depends(require_role("supervisor", "admin")),
 ):
     shipment, decided_at = get_repository().decide_release(
-        shipment_id, decision=body.decision, reason=body.reason, actor=user
+        shipment_id,
+        decision=body.decision,
+        reason=body.reason,
+        actor=user,
+        organization_id=get_workspace(request, user).id,
     )
     get_repository().record_audit(
         "shipment.release_decision",
         "shipment",
         entity_id=shipment_id,
         actor=user,
+        organization_id=get_workspace(request, user).id,
         metadata={"decision": body.decision, "reason": body.reason},
         request_id=request.state.request_id,
     )
@@ -351,7 +416,7 @@ def release_decision(
 
 
 @router.get("/api/audit", response_model=list[AuditEventResponse])
-def audit(_: UserRow = Depends(require_role("admin", "supervisor"))):
+def audit(request: Request, user: UserRow = Depends(require_role("admin", "supervisor"))):
     return [
         AuditEventResponse(
             id=row.id,
@@ -364,14 +429,18 @@ def audit(_: UserRow = Depends(require_role("admin", "supervisor"))):
             request_id=row.request_id,
             created_at=row.created_at,
         )
-        for row in get_repository().list_audit()
+        for row in get_repository().list_audit(organization_id=get_workspace(request, user).id)
     ]
 
 
 @router.get("/api/monitoring")
-def monitoring(_: UserRow = Depends(current_user)):
+def monitoring(request: Request, user: UserRow = Depends(current_user)):
     settings = get_settings()
-    volume = get_repository().dashboard(datetime.now(UTC) - timedelta(days=1), datetime.now(UTC))
+    volume = get_repository().dashboard(
+        datetime.now(UTC) - timedelta(days=1),
+        datetime.now(UTC),
+        organization_id=get_workspace(request, user).id,
+    )
     volume.pop("recent", None)
     return {
         **readiness_summary(),
@@ -419,6 +488,7 @@ def create_user(
         "user",
         entity_id=user.id,
         actor=actor,
+        organization_id=get_workspace(request, actor).id,
         metadata={"role": user.role},
         request_id=request.state.request_id,
     )
@@ -446,6 +516,7 @@ def update_user(
         "user",
         entity_id=user.id,
         actor=actor,
+        organization_id=get_workspace(request, actor).id,
         metadata={"role": user.role, "active": user.active},
         request_id=request.state.request_id,
     )

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Package } from "@phosphor-icons/react";
+import { ArrowLeftIcon as ArrowLeft, PackageIcon as Package } from "@phosphor-icons/react";
 import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";

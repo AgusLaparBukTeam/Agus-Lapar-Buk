@@ -1,0 +1,8 @@
+"use client";
+
+import { ShieldCheckIcon as ShieldCheck } from "@phosphor-icons/react";
+import { PageHeader } from "@/components/ui/page-header";
+
+const permissions = [["shipment.read", "View shipment cases", true, true, true], ["shipment.create", "Create shipment cases", true, true, true], ["document.upload", "Upload evidence", true, true, true], ["assessment.run", "Run assurance checks", true, true, true], ["exception.resolve", "Resolve operational exceptions", false, true, true], ["release.hold", "Place shipment on hold", false, true, true], ["release.authorize", "Authorize release", false, true, true], ["release.second_approve", "Provide second approval", false, true, true], ["audit.read", "Read activity log", false, true, true], ["people.manage", "Manage people", false, false, true], ["workspace.manage", "Manage workspace", false, false, true]] as const;
+
+export default function RolesPage() { return <div className="operations-page"><PageHeader icon={ShieldCheck} title="Roles & permissions" description="System-managed roles keep shipment responsibilities clear without exposing unsafe custom policy editing." /><section className="data-panel data-panel--wide"><div className="table-scroll"><table className="data-table permission-table"><thead><tr><th>Permission</th><th>Operator</th><th>Reviewer</th><th>Administrator</th></tr></thead><tbody>{permissions.map(([key, label, operator, reviewer, admin]) => <tr key={key}><td><strong>{label}</strong><small>{key}</small></td><td>{operator ? "Allowed" : "—"}</td><td>{reviewer ? "Allowed" : "—"}</td><td>{admin ? "Allowed" : "—"}</td></tr>)}</tbody></table></div></section></div>; }

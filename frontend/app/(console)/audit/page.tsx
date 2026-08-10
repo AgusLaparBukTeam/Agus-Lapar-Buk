@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive } from "@phosphor-icons/react";
+import { ArchiveIcon as Archive } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/ui/page-header";
 import { fetchAudit } from "@/lib/api";

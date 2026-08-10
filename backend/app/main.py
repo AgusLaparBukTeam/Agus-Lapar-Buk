@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.operations import router as operations_router
 from app.api.routes import get_repository, router
 from app.core.config import get_settings
 from app.core.errors import GateGuardError
@@ -25,12 +26,19 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "X-Request-ID"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Content-Type",
+        "X-API-Key",
+        "X-Request-ID",
+        "X-GateGuard-Organization",
+        "Idempotency-Key",
+    ],
 )
 
 install_security_middleware(app, settings)
 app.include_router(router)
+app.include_router(operations_router)
 
 
 @app.exception_handler(GateGuardError)

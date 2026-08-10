@@ -40,6 +40,7 @@ class ReconciliationRow(Base):
     __tablename__ = "reconciliations"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     result_json: Mapped[str] = mapped_column(Text)
@@ -83,6 +84,7 @@ class UserRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
 
 class SessionRow(Base):
@@ -102,6 +104,7 @@ class AuditEventRow(Base):
     __tablename__ = "audit_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     actor_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=True, index=True
     )
@@ -118,6 +121,8 @@ class ShipmentCaseRow(Base):
     __tablename__ = "shipment_cases"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    organization_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    facility_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     internal_reference: Mapped[str] = mapped_column(String(120), index=True)
     external_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
     origin: Mapped[str] = mapped_column(String(160))
@@ -134,6 +139,27 @@ class ShipmentCaseRow(Base):
     created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consignment_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    origin_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    origin_location: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    destination_country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    destination_location: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    incoterm: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    priority: Mapped[str] = mapped_column(String(16), default="MEDIUM", index=True)
+    risk_score: Mapped[float] = mapped_column(Float, default=0)
+    risk_factors_json: Mapped[str] = mapped_column(Text, default="[]")
+    assessment_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_assessed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    release_authorized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TrustedShipmentReferenceRow(Base):
@@ -203,6 +229,7 @@ def user_dict(user: UserRow) -> dict[str, Any]:
         "created_at": user.created_at,
         "updated_at": user.updated_at,
         "last_login_at": user.last_login_at,
+        "must_change_password": user.must_change_password,
     }
 
 
@@ -224,6 +251,10 @@ class ReconciliationRepository:
         self.engine = create_engine(database_url, connect_args=connect_args, pool_pre_ping=True)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False)
         if auto_create_schema:
+            # Import the extended operational models before create_all so fresh
+            # installations receive the complete assurance schema in one pass.
+            from app.repositories import operations as _operations  # noqa: F401
+
             Base.metadata.create_all(self.engine)
 
     def ping(self) -> None:
@@ -233,7 +264,15 @@ class ReconciliationRepository:
 
     def save(self, result: ReconciliationResult) -> ReconciliationResult:
         now = datetime.now(UTC)
+        shipment_id = _shipment_id(result)
         with self.session_factory() as session:
+            organization_id = (
+                session.scalar(
+                    select(ShipmentCaseRow.organization_id).where(ShipmentCaseRow.id == shipment_id)
+                )
+                if shipment_id
+                else None
+            )
             row = session.get(ReconciliationRow, result.session_id)
             if row is None:
                 row = ReconciliationRow(
@@ -243,7 +282,8 @@ class ReconciliationRepository:
                     result_json=result.model_dump_json(),
                     status=result.status.value,
                     processing_ms=result.processing_ms,
-                    shipment_id=_shipment_id(result),
+                    organization_id=organization_id,
+                    shipment_id=shipment_id,
                 )
                 session.add(row)
             else:
@@ -251,7 +291,8 @@ class ReconciliationRepository:
                 row.result_json = result.model_dump_json()
                 row.status = result.status.value
                 row.processing_ms = result.processing_ms
-                row.shipment_id = _shipment_id(result)
+                row.organization_id = organization_id
+                row.shipment_id = shipment_id
             session.commit()
         return result
 
@@ -262,6 +303,7 @@ class ReconciliationRepository:
         *,
         entity_id: str | None = None,
         actor: UserRow | None = None,
+        organization_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         request_id: str | None = None,
     ) -> None:
@@ -269,6 +311,7 @@ class ReconciliationRepository:
             session.add(
                 AuditEventRow(
                     id=str(uuid.uuid4()),
+                    organization_id=organization_id,
                     actor_user_id=actor.id if actor else None,
                     actor_display_name=actor.display_name if actor else None,
                     event_type=event_type,
@@ -284,6 +327,19 @@ class ReconciliationRepository:
     def get_user_by_email(self, email: str) -> UserRow | None:
         with self.session_factory() as session:
             return session.scalar(select(UserRow).where(UserRow.email == email.strip().casefold()))
+
+    def change_password(self, user_id: str, password_hash: str) -> UserRow:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            user = session.get(UserRow, user_id)
+            if user is None:
+                raise NotFoundError("User was not found.")
+            user.password_hash = password_hash
+            user.must_change_password = False
+            user.updated_at = now
+            session.commit()
+            session.refresh(user)
+            return user
 
     def get_user(self, user_id: str) -> UserRow | None:
         with self.session_factory() as session:
@@ -302,6 +358,7 @@ class ReconciliationRepository:
             active=True,
             created_at=now,
             updated_at=now,
+            must_change_password=True,
         )
         with self.session_factory() as session:
             if session.scalar(select(UserRow).where(UserRow.email == user.email)):
@@ -311,6 +368,30 @@ class ReconciliationRepository:
             session.add(user)
             session.commit()
             session.refresh(user)
+            # New accounts are scoped to the default workspace immediately;
+            # later workspace switching is validated against memberships.
+            try:
+                from app.repositories.operations import OrganizationRow, WorkspaceMembershipRow
+
+                organization = session.scalar(
+                    select(OrganizationRow).order_by(OrganizationRow.created_at.asc())
+                )
+                if organization:
+                    session.add(
+                        WorkspaceMembershipRow(
+                            id=str(uuid.uuid4()),
+                            organization_id=organization.id,
+                            user_id=user.id,
+                            role=role,
+                            active=True,
+                            created_at=datetime.now(UTC),
+                        )
+                    )
+                    session.commit()
+            except Exception:
+                # Legacy databases can be upgraded before the optional
+                # workspace tables exist; authentication must remain usable.
+                session.rollback()
             return user
 
     def mark_login(self, user_id: str) -> None:
@@ -368,53 +449,225 @@ class ReconciliationRepository:
         }
 
     def create_shipment(self, *, payload: dict[str, Any], actor: UserRow) -> dict[str, Any]:
+        # The legacy shipment API now writes into the same workspace boundary
+        # as the operations API. Keep the lookup local to avoid an import cycle
+        # while preserving compatibility for existing callers and databases.
+        from app.repositories.operations import (
+            AssuranceCheckRow,
+            DocumentRequirementRow,
+            DomainEventRow,
+            FacilityRow,
+            OrganizationRow,
+            RequirementEvaluationRow,
+            WorkspaceMembershipRow,
+        )
+
         now = datetime.now(UTC)
-        shipment = ShipmentCaseRow(
-            id=str(uuid.uuid4()),
-            internal_reference=payload["internal_reference"],
-            external_reference=payload.get("external_reference"),
-            origin=payload["origin"],
-            destination=payload["destination"],
-            transport_mode=payload.get("transport_mode") or "Road",
-            status=ShipmentStatus.DOCUMENTS_REQUIRED.value,
-            risk_level=RiskLevel.LOW.value,
-            created_by=actor.id,
-            created_at=now,
-            updated_at=now,
-        )
-        reference = TrustedShipmentReferenceRow(
-            id=str(uuid.uuid4()),
-            shipment_id=shipment.id,
-            order_reference=payload.get("external_reference"),
-            shipment_reference=payload["internal_reference"],
-            expected_recipient=payload.get("expected_recipient"),
-            expected_destination=payload["destination"],
-            expected_currency=payload.get("expected_currency"),
-            expected_total=payload.get("expected_total"),
-            source_system="Workspace entry",
-            retrieved_at=now,
-        )
-        task = ReviewTaskRow(
-            id=str(uuid.uuid4()),
-            shipment_id=shipment.id,
-            issue="Add the shipment documents for review.",
-            priority=RiskLevel.LOW.value,
-            stage="Documents",
-            status=WorkQueueStatus.OPEN.value,
-            created_at=now,
-            updated_at=now,
-        )
         with self.session_factory() as session:
-            session.add_all([shipment, reference, task])
+            organization = session.scalar(
+                select(OrganizationRow)
+                .join(
+                    WorkspaceMembershipRow,
+                    WorkspaceMembershipRow.organization_id == OrganizationRow.id,
+                )
+                .where(
+                    WorkspaceMembershipRow.user_id == actor.id,
+                    WorkspaceMembershipRow.active.is_(True),
+                    OrganizationRow.active.is_(True),
+                )
+                .order_by(OrganizationRow.created_at.asc())
+            )
+            if organization is None:
+                organization = session.scalar(
+                    select(OrganizationRow).order_by(OrganizationRow.created_at.asc())
+                )
+            if organization is None:
+                organization = OrganizationRow(
+                    id=str(uuid.uuid4()),
+                    name="GateGuard Operations",
+                    code="DEFAULT",
+                    default_timezone="UTC",
+                    default_locale="en-GB",
+                    default_currency="USD",
+                    active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(organization)
+                session.flush()
+            facility = session.scalar(
+                select(FacilityRow)
+                .where(FacilityRow.organization_id == organization.id, FacilityRow.active.is_(True))
+                .order_by(FacilityRow.created_at.asc())
+            )
+            if facility is None:
+                facility = FacilityRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization.id,
+                    name="Primary facility",
+                    code="PRIMARY",
+                    timezone=organization.default_timezone,
+                    active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(facility)
+            membership = session.scalar(
+                select(WorkspaceMembershipRow).where(
+                    WorkspaceMembershipRow.organization_id == organization.id,
+                    WorkspaceMembershipRow.user_id == actor.id,
+                )
+            )
+            if membership is None:
+                session.add(
+                    WorkspaceMembershipRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization.id,
+                        user_id=actor.id,
+                        role=actor.role,
+                        active=True,
+                        created_at=now,
+                    )
+                )
+            shipment = ShipmentCaseRow(
+                id=str(uuid.uuid4()),
+                organization_id=organization.id,
+                facility_id=facility.id,
+                internal_reference=payload["internal_reference"],
+                external_reference=payload.get("external_reference"),
+                origin=payload["origin"],
+                destination=payload["destination"],
+                transport_mode=payload.get("transport_mode") or "Road",
+                status=ShipmentStatus.DOCUMENTS_REQUIRED.value,
+                risk_level=RiskLevel.LOW.value,
+                created_by=actor.id,
+                created_at=now,
+                updated_at=now,
+                consignment_reference=payload.get("consignment_reference"),
+                origin_country=payload.get("origin_country"),
+                origin_location=payload.get("origin_location"),
+                destination_country=payload.get("destination_country"),
+                destination_location=payload.get("destination_location"),
+                incoterm=payload.get("incoterm"),
+                currency=payload.get("currency") or payload.get("expected_currency"),
+                priority=payload.get("priority") or "MEDIUM",
+            )
+            reference = TrustedShipmentReferenceRow(
+                id=str(uuid.uuid4()),
+                shipment_id=shipment.id,
+                order_reference=payload.get("external_reference"),
+                shipment_reference=payload["internal_reference"],
+                expected_recipient=payload.get("expected_recipient"),
+                expected_destination=payload["destination"],
+                expected_currency=payload.get("expected_currency"),
+                expected_total=payload.get("expected_total"),
+                source_system="Workspace entry",
+                retrieved_at=now,
+            )
+            task = ReviewTaskRow(
+                id=str(uuid.uuid4()),
+                shipment_id=shipment.id,
+                issue="Add the shipment documents for review.",
+                priority=RiskLevel.LOW.value,
+                stage="Documents",
+                status=WorkQueueStatus.OPEN.value,
+                created_at=now,
+                updated_at=now,
+            )
+            requirements = list(
+                session.scalars(
+                    select(DocumentRequirementRow).where(
+                        DocumentRequirementRow.organization_id == organization.id,
+                        DocumentRequirementRow.active.is_(True),
+                    )
+                )
+            )
+            if not requirements:
+                for name, document_type, reason in (
+                    (
+                        "Commercial invoice",
+                        "INVOICE",
+                        "Confirms declared value and commercial terms.",
+                    ),
+                    ("Packing list", "PACKING_LIST", "Confirms items and package counts."),
+                    (
+                        "Delivery order",
+                        "DELIVERY_ORDER",
+                        "Confirms handover and destination details.",
+                    ),
+                ):
+                    requirement = DocumentRequirementRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization.id,
+                        rule_pack_id=None,
+                        name=name,
+                        document_type=document_type,
+                        status="ACTIVE",
+                        condition_json="{}",
+                        reason=reason,
+                        active=True,
+                        created_at=now,
+                    )
+                    requirements.append(requirement)
+                    session.add(requirement)
+            evaluations = [
+                RequirementEvaluationRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization.id,
+                    shipment_id=shipment.id,
+                    requirement_id=requirement.id,
+                    rule_pack_version="baseline-1",
+                    result="PENDING",
+                    reason="Required evidence has not been attached yet.",
+                    evaluated_at=now,
+                )
+                for requirement in requirements
+            ]
+            session.add_all([shipment, reference, task, *evaluations])
+            session.add(
+                AssuranceCheckRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization.id,
+                    shipment_id=shipment.id,
+                    check_type="REQUIREMENTS",
+                    status="REVIEW",
+                    severity="MEDIUM",
+                    summary="Required shipment evidence is still missing.",
+                    details_json=json.dumps({"required": len(requirements), "attached": 0}),
+                    source="GateGuard baseline requirements",
+                    source_version="baseline-1",
+                    rule_pack_version="baseline-1",
+                    created_at=now,
+                )
+            )
+            session.add(
+                DomainEventRow(
+                    id=str(uuid.uuid4()),
+                    organization_id=organization.id,
+                    event_type="shipment.created",
+                    entity_type="shipment",
+                    entity_id=shipment.id,
+                    payload_json=json.dumps({"status": shipment.status}),
+                    created_at=now,
+                )
+            )
             session.commit()
             session.refresh(shipment)
             return self._shipment_dict(session, shipment)
 
     def list_shipments(
-        self, *, page: int, page_size: int, status: str | None = None, query: str | None = None
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str | None = None,
+        query: str | None = None,
+        organization_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         with self.session_factory() as session:
             filters = []
+            if organization_id:
+                filters.append(ShipmentCaseRow.organization_id == organization_id)
             if status:
                 filters.append(ShipmentCaseRow.status == status)
             if query:
@@ -438,9 +691,20 @@ class ReconciliationRepository:
             total = session.scalar(select(func.count(ShipmentCaseRow.id)).where(*filters)) or 0
             return [self._shipment_dict(session, row) for row in rows], int(total)
 
-    def get_shipment(self, shipment_id: str) -> dict[str, Any]:
+    def get_shipment(
+        self, shipment_id: str, *, organization_id: str | None = None
+    ) -> dict[str, Any]:
         with self.session_factory() as session:
-            row = session.get(ShipmentCaseRow, shipment_id)
+            row = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    *(
+                        [ShipmentCaseRow.organization_id == organization_id]
+                        if organization_id
+                        else []
+                    ),
+                )
+            )
             if row is None:
                 raise NotFoundError("Shipment was not found.")
             return self._shipment_dict(session, row)
@@ -453,9 +717,12 @@ class ReconciliationRepository:
         status: str | None = None,
         priority: str | None = None,
         assignee: str | None = None,
+        organization_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         with self.session_factory() as session:
             filters = []
+            if organization_id:
+                filters.append(ShipmentCaseRow.organization_id == organization_id)
             if status:
                 filters.append(ReviewTaskRow.status == status)
             if priority:
@@ -473,7 +740,13 @@ class ReconciliationRepository:
                 .limit(page_size)
             )
             rows = list(session.execute(stmt))
-            total = session.scalar(select(func.count(ReviewTaskRow.id)).where(*filters)) or 0
+            count_stmt = (
+                select(func.count(ReviewTaskRow.id))
+                .select_from(ReviewTaskRow)
+                .join(ShipmentCaseRow, ShipmentCaseRow.id == ReviewTaskRow.shipment_id)
+                .where(*filters)
+            )
+            total = session.scalar(count_stmt) or 0
             items = [
                 {
                     "id": task.id,
@@ -496,7 +769,9 @@ class ReconciliationRepository:
             ]
             return items, int(total)
 
-    def update_work_task(self, task_id: str, *, status: str, actor: UserRow) -> dict[str, Any]:
+    def update_work_task(
+        self, task_id: str, *, status: str, actor: UserRow, organization_id: str | None = None
+    ) -> dict[str, Any]:
         now = datetime.now(UTC)
         with self.session_factory() as session:
             task = session.get(ReviewTaskRow, task_id)
@@ -504,12 +779,21 @@ class ReconciliationRepository:
                 raise NotFoundError("Work queue item was not found.")
             task.status = status
             task.assignee = (
-                actor.id
-                if status == WorkQueueStatus.IN_PROGRESS.value
-                else task.assignee
+                actor.id if status == WorkQueueStatus.IN_PROGRESS.value else task.assignee
             )
             task.updated_at = now
-            shipment = session.get(ShipmentCaseRow, task.shipment_id)
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == task.shipment_id,
+                    *(
+                        [ShipmentCaseRow.organization_id == organization_id]
+                        if organization_id
+                        else []
+                    ),
+                )
+            )
+            if shipment is None:
+                raise NotFoundError("Work queue item was not found in this workspace.")
             if shipment:
                 remaining = (
                     session.scalar(
@@ -542,11 +826,28 @@ class ReconciliationRepository:
             }
 
     def decide_release(
-        self, shipment_id: str, *, decision: str, reason: str, actor: UserRow
+        self,
+        shipment_id: str,
+        *,
+        decision: str,
+        reason: str,
+        actor: UserRow,
+        organization_id: str | None = None,
     ) -> tuple[dict[str, Any], datetime]:
+        from app.repositories.operations import DomainEventRow
+
         now = datetime.now(UTC)
         with self.session_factory() as session:
-            shipment = session.get(ShipmentCaseRow, shipment_id)
+            shipment = session.scalar(
+                select(ShipmentCaseRow).where(
+                    ShipmentCaseRow.id == shipment_id,
+                    *(
+                        [ShipmentCaseRow.organization_id == organization_id]
+                        if organization_id
+                        else []
+                    ),
+                )
+            )
             if shipment is None:
                 raise NotFoundError("Shipment was not found.")
             open_tasks = (
@@ -594,6 +895,18 @@ class ReconciliationRepository:
                         status=WorkQueueStatus.OPEN.value,
                         created_at=now,
                         updated_at=now,
+                    )
+                )
+            if shipment.organization_id:
+                session.add(
+                    DomainEventRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=shipment.organization_id,
+                        event_type="release.decision.recorded",
+                        entity_type="shipment",
+                        entity_id=shipment_id,
+                        payload_json=json.dumps({"decision": decision}),
+                        created_at=now,
                     )
                 )
             session.commit()
@@ -699,9 +1012,12 @@ class ReconciliationRepository:
         date_to: datetime | None = None,
         overridden: bool | None = None,
         query: str | None = None,
+        organization_id: str | None = None,
     ) -> tuple[list[ReconciliationResult], int]:
         with self.session_factory() as session:
             filters = []
+            if organization_id:
+                filters.append(ReconciliationRow.organization_id == organization_id)
             if status:
                 filters.append(
                     or_(
@@ -744,14 +1060,20 @@ class ReconciliationRepository:
             ]
             return results, int(total)
 
-    def dashboard(self, start: datetime, end: datetime) -> dict[str, Any]:
+    def dashboard(
+        self, start: datetime, end: datetime, *, organization_id: str | None = None
+    ) -> dict[str, Any]:
         with self.session_factory() as session:
+            filters = [
+                ReconciliationRow.created_at >= start,
+                ReconciliationRow.created_at < end,
+            ]
+            if organization_id:
+                filters.append(ReconciliationRow.organization_id == organization_id)
             rows = list(
                 session.scalars(
                     select(ReconciliationRow)
-                    .where(
-                        ReconciliationRow.created_at >= start, ReconciliationRow.created_at < end
-                    )
+                    .where(*filters)
                     .order_by(ReconciliationRow.created_at.desc())
                 )
             )
@@ -782,11 +1104,17 @@ class ReconciliationRepository:
                 "recent": results[:8],
             }
 
-    def list_audit(self, limit: int = 100) -> list[AuditEventRow]:
+    def list_audit(
+        self, limit: int = 100, *, organization_id: str | None = None
+    ) -> list[AuditEventRow]:
         with self.session_factory() as session:
+            filters = [AuditEventRow.organization_id == organization_id] if organization_id else []
             return list(
                 session.scalars(
-                    select(AuditEventRow).order_by(AuditEventRow.created_at.desc()).limit(limit)
+                    select(AuditEventRow)
+                    .where(*filters)
+                    .order_by(AuditEventRow.created_at.desc())
+                    .limit(limit)
                 )
             )
 
@@ -825,10 +1153,17 @@ class ReconciliationRepository:
             result.audit.overridden_by = latest.actor
         return result
 
-    def get(self, session_id: str) -> ReconciliationResult:
+    def get(self, session_id: str, *, organization_id: str | None = None) -> ReconciliationResult:
         with self.session_factory() as session:
             row = session.scalar(
-                select(ReconciliationRow).where(ReconciliationRow.id == session_id)
+                select(ReconciliationRow).where(
+                    ReconciliationRow.id == session_id,
+                    *(
+                        [ReconciliationRow.organization_id == organization_id]
+                        if organization_id
+                        else []
+                    ),
+                )
             )
             if row is None:
                 raise NotFoundError("Reconciliation session was not found.")
@@ -841,6 +1176,7 @@ class ReconciliationRepository:
         request: OverrideRequest,
         actor_user: UserRow | None = None,
         request_id: str | None = None,
+        organization_id: str | None = None,
     ) -> ReconciliationResult:
         event_id = str(uuid.uuid4())
         with self.session_factory() as session:
@@ -848,7 +1184,14 @@ class ReconciliationRepository:
             # This preserves a truthful previous_decision chain under concurrent supervisors.
             row = session.scalar(
                 select(ReconciliationRow)
-                .where(ReconciliationRow.id == session_id)
+                .where(
+                    ReconciliationRow.id == session_id,
+                    *(
+                        [ReconciliationRow.organization_id == organization_id]
+                        if organization_id
+                        else []
+                    ),
+                )
                 .with_for_update()
             )
             if row is None:
@@ -907,7 +1250,8 @@ class ReconciliationRepository:
                 "previous_decision": str(previous),
                 "final_decision": request.final_decision.value,
             },
+            organization_id=organization_id,
             request_id=request_id,
         )
 
-        return self.get(session_id)
+        return self.get(session_id, organization_id=organization_id)

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, FileText } from "@phosphor-icons/react";
+import { ArrowLeftIcon as ArrowLeft, FileTextIcon as FileText } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";

@@ -1,6 +1,6 @@
 # GateGuard
 
-GateGuard is an internal operations console for pre-dispatch shipment document assurance. It accepts a Surat Jalan / Delivery Order, Invoice, and Packing List, extracts structured evidence, and applies deterministic `CLEAR`, `REVIEW`, or `HOLD` rules. Extraction may be probabilistic; the operational decision is not.
+GateGuard is an organization-scoped shipment assurance workspace. It brings shipment cases, evidence, checks, exceptions, approvals, and dispatch decisions into one operational record. Extraction may be probabilistic; release decisions remain deterministic, reviewable, and fail closed.
 
 ## Architecture
 
@@ -8,25 +8,28 @@ GateGuard is an internal operations console for pre-dispatch shipment document a
 Browser
   -> Next.js operations console + BFF (HttpOnly session cookie, server API key)
   -> FastAPI modular monolith
-       auth / sessions / RBAC / audit
-       reconciliation API + query endpoints
-       extraction adapters + deterministic domain engine
+       organizations / facilities / memberships
+       auth / sessions / RBAC / audit / four-eyes approval
+       shipment lifecycle / work queue / document vault
+       assurance checks / exceptions / rule packs / screening records
+       integrations / service tokens / webhooks / processing jobs
+       analytics / observability / deterministic domain rules
   -> PostgreSQL in production, SQLite for local development/tests
 ```
 
-The browser never receives the backend service key, provider credentials, database credentials, or session token through JavaScript. The BFF forwards the browser cookie and keeps the service credential server-side.
+The browser never receives backend service keys, provider credentials, database credentials, or session tokens through JavaScript. The BFF forwards the browser cookie and keeps service credentials server-side.
 
-## Operations console
+## Operations workspace
 
-- `/login` — database-backed login.
-- `/dashboard` — persisted daily counts, latency, and recent activity.
-- `/reconcile` — three-file reconciliation workspace and authorized override flow.
-- `/history` and `/history/[id]` — paginated history and durable structured investigation.
-- `/monitoring` — application/database/provider readiness and real persisted volume.
-- `/audit` — supervisor/admin audit events.
-- `/settings` and `/settings/users` — safe runtime information and admin-only user management.
+- `/login` — database-backed sign-in with temporary-password enforcement.
+- `/dashboard` — active shipments, exceptions, overdue work, release readiness, and recents.
+- `/shipments` — shipment register and a tabbed operational record.
+- `/documents`, `/parties`, `/products`, `/transport` — evidence and movement registers.
+- `/requirements`, `/assurance`, `/exceptions`, `/screening`, `/dangerous-goods` — assurance workflows with honest empty states.
+- `/work-queue`, `/releases`, `/analytics`, `/observability`, `/audit` — decisions, workload, trends, and traceability.
+- `/integrations/*`, `/governance/*`, and `/settings/*` — controlled connections, rule packs, reference data, people, policy, security, and retention.
 
-Roles are `operator`, `supervisor`, and `admin`. Operators can reconcile and inspect results; supervisors can override and view operational audit events; admins can manage users and view all audit events. Backend dependencies enforce these policies; hiding a frontend control is not the security boundary.
+Roles are `operator`, `supervisor`, and `admin`. Backend dependencies enforce the permissions; hiding a frontend control is not the security boundary.
 
 ## Local setup
 
@@ -51,19 +54,17 @@ npm ci --include=dev
 npm run dev
 ```
 
-The first admin is created interactively. The password is never committed or logged. In production, run migrations before the application and then run the same bootstrap command against the production database.
+The first admin is created interactively. Passwords are never committed or logged. In production, run migrations before starting the application.
 
 ## Database and security
 
-Migrations are in `backend/alembic/versions`. The current schema includes `users`, opaque-token `sessions`, `reconciliations`, append-only `reconciliation_overrides`, and `audit_events`. Passwords use Argon2id; only SHA-256 hashes of random session tokens are stored. Cookies are HttpOnly, SameSite=Lax, and Secure in production. Deactivation revokes active sessions, and the final active admin cannot be demoted or deactivated.
+Migration `0004_assurance_control_plane` adds organization, facility, membership, shipment lifecycle, document, assurance, exception, integration, job, notification, and audit boundaries. Passwords use Argon2id; only SHA-256 hashes of random session tokens are stored. Cookies are HttpOnly, SameSite=Lax, and Secure in production. Deactivation revokes active sessions, and the final active admin cannot be demoted or deactivated.
 
-Override identity is derived from the authenticated session. The request cannot choose an arbitrary actor or submit a shared supervisor credential. Every login, logout, reconciliation creation, override, and user administration action emits a safe audit event.
+Production requires PostgreSQL, a 32+ character `APP_API_KEY`, explicit non-wildcard `CORS_ORIGINS`, and secure cookies. Never put `OPENAI_API_KEY`, `APP_API_KEY`, database passwords, or other secrets in `NEXT_PUBLIC_*` variables.
 
-Production requires PostgreSQL, a 32+ character `APP_API_KEY`, explicit non-wildcard `CORS_ORIGINS`, and secure cookie configuration. Never put `OPENAI_API_KEY`, `APP_API_KEY`, database passwords, or other secrets in `NEXT_PUBLIC_*` variables.
+## Extraction and screening
 
-## Extraction providers
-
-`EXTRACTION_PROVIDER` accepts `local`, `openai`, `paddle`, or `auto`. Local PDF extraction is the default safe development path. Provider configuration is shown only as a boolean in monitoring; secret values are never returned.
+`EXTRACTION_PROVIDER` accepts `local`, `openai`, `paddle`, or `auto`. Local PDF extraction is the safe development path. Provider configuration is shown as an honest state in observability; secret values are never returned. Unconfigured screening is reported as unconfigured rather than as a successful screen.
 
 ## Tests and validation
 
@@ -71,17 +72,17 @@ Production requires PostgreSQL, a 32+ character `APP_API_KEY`, explicit non-wild
 cd backend
 python -m pytest
 python -m ruff check app scripts tests
-python ../evaluation/run.py
 alembic upgrade head
 
 cd ../frontend
 npm test
 npm run lint
 npm run build
+npm audit --omit=dev
 ```
 
-Compose files are `docker-compose.yml` for local SQLite and `docker-compose.prod.yml` for PostgreSQL plus a migration job. Docker Compose validation requires Docker to be installed.
+Compose validation requires Docker to be installed.
 
 ## Scope limitation
 
-Historical investigation deliberately persists structured evidence and provenance, not raw shipment files. GateGuard verifies cross-document consistency; it does not prove physical contents or replace an authoritative WMS/ERP shipment reference.
+The development metadata vault records document versions and secure storage keys; production object-storage wiring and external screening-provider credentials remain deployment configuration. GateGuard verifies cross-document consistency and workflow evidence; it does not prove physical contents or replace an authoritative WMS/ERP shipment reference.

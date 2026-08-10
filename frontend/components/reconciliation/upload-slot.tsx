@@ -1,6 +1,6 @@
 "use client";
 
-import { File, FileArrowUp, X } from "@phosphor-icons/react";
+import { FileIcon as File, FileArrowUpIcon as FileArrowUp, XIcon as X } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { validateFile } from "@/lib/validation";

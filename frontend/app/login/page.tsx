@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, EyeSlash } from "@phosphor-icons/react";
+import { EyeIcon as Eye, EyeSlashIcon as EyeSlash } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
@@ -33,10 +33,10 @@ export default function LoginPage() {
     setError("");
     setPending(true);
     try {
-      await login(email, password);
+      const user = await login(email, password);
       if (remember) window.localStorage.setItem("gateguard.login.email", email);
       else window.localStorage.removeItem("gateguard.login.email");
-      router.replace(nextPath);
+      router.replace(user.must_change_password ? `/change-password?next=${encodeURIComponent(nextPath)}` : nextPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : "We could not sign you in.");
     } finally {

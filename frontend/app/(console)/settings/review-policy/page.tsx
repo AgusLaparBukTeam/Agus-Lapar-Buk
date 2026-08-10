@@ -1,0 +1,14 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
+import { fetchWorkspaceSettings, saveWorkspaceSettings } from "@/lib/api";
+
+export default function ReviewPolicyPage() {
+  const [form, setForm] = useState({ low_sla_hours: "24", medium_sla_hours: "8", high_sla_hours: "4", critical_sla_hours: "1", require_decision_reason: true, require_high_risk_approval: true, require_critical_exception_approval: true });
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { fetchWorkspaceSettings().then((data) => { const values = data.settings as Record<string, unknown> | undefined; if (values?.review_policy) setForm((current) => ({ ...current, ...(values.review_policy as typeof current) })); }); }, []);
+  async function save(event: React.FormEvent) { event.preventDefault(); await saveWorkspaceSettings({ review_policy: form }); setSaved(true); window.setTimeout(() => setSaved(false), 2500); }
+  return <div className="operations-page"><PageHeader title="Review policy" description="Define how long work can wait and when a second person must approve a high-risk release." /><form className="form-panel settings-form" onSubmit={save}><div className="form-grid"><label>Low priority SLA (hours)<input type="number" min="1" value={form.low_sla_hours} onChange={(event) => setForm({ ...form, low_sla_hours: event.target.value })} /></label><label>Medium priority SLA (hours)<input type="number" min="1" value={form.medium_sla_hours} onChange={(event) => setForm({ ...form, medium_sla_hours: event.target.value })} /></label><label>High priority SLA (hours)<input type="number" min="1" value={form.high_sla_hours} onChange={(event) => setForm({ ...form, high_sla_hours: event.target.value })} /></label><label>Critical priority SLA (hours)<input type="number" min="1" value={form.critical_sla_hours} onChange={(event) => setForm({ ...form, critical_sla_hours: event.target.value })} /></label></div><div className="settings-check-list"><label><input type="checkbox" checked={form.require_decision_reason} onChange={(event) => setForm({ ...form, require_decision_reason: event.target.checked })} /> Require a reason for every decision</label><label><input type="checkbox" checked={form.require_high_risk_approval} onChange={(event) => setForm({ ...form, require_high_risk_approval: event.target.checked })} /> Require second approval for high-risk release</label><label><input type="checkbox" checked={form.require_critical_exception_approval} onChange={(event) => setForm({ ...form, require_critical_exception_approval: event.target.checked })} /> Require second approval for critical exceptions</label></div><div className="form-panel__actions"><Button type="submit">Save policy</Button>{saved && <span className="form-success" role="status">Policy saved</span>}</div></form></div>;
+}

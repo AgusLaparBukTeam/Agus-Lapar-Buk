@@ -12,6 +12,7 @@ node_modules/
 frontend/node_modules/
 .next/
 frontend/.next/
+*.tsbuildinfo
 coverage/
 .coverage
 playwright-report/

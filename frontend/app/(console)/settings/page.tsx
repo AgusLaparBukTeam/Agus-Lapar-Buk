@@ -1,21 +1,22 @@
 "use client";
 
-import { Gear, UsersThree } from "@phosphor-icons/react";
-import { useState } from "react";
-import { ActionLink, Button } from "@/components/ui/button";
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { GearIcon as Gear, LockKeyIcon as LockKey, UsersThreeIcon as UsersThree } from "@phosphor-icons/react";
 import { PageHeader } from "@/components/ui/page-header";
+import { fetchWorkspaceSettings } from "@/lib/api";
 
-const sections = [
-  ["workspace", "Workspace"],
-  ["access", "Access"],
-  ["review", "Review rules"],
+const categories = [
+  ["/settings/general", "General", "Workspace name, locale, timezone, and currency."],
+  ["/settings/review-policy", "Review policy", "SLA and release approval rules."],
+  ["/settings/documents", "Documents", "Allowed evidence and retention policy."],
+  ["/settings/notifications", "Notifications", "Workspace alerts and personal preferences."],
+  ["/settings/retention", "Retention", "Audit, document, job, and webhook history."],
+  ["/settings/security", "Security", "Sessions, password policy, and API access."],
 ] as const;
 
 export default function SettingsPage() {
-  const [active, setActive] = useState<(typeof sections)[number][0]>("workspace");
-  function jumpTo(id: (typeof sections)[number][0]) {
-    setActive(id);
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-  return <div><PageHeader icon={Gear} title="Workspace settings" description="Control how your team reviews shipments and manages access." /><div className="settings-layout"><aside className="settings-nav" aria-label="Settings sections"><div className="settings-nav__title">Settings</div>{sections.map(([id, label]) => <button type="button" key={id} className={active === id ? "is-active" : ""} onClick={() => jumpTo(id)}>{label}</button>)}</aside><div className="settings-sections"><section className="settings-section" id="workspace"><div><h2>Workspace</h2><p>Basic information shown to your team while they work.</p></div><dl className="settings-values"><div><dt>Workspace name</dt><dd>GateGuard Operations</dd></div><div><dt>Default review language</dt><dd>English</dd></div></dl></section><section className="settings-section" id="access"><div><h2>People and access</h2><p>Invite the people who prepare, review, and approve shipment decisions.</p></div><div className="settings-actions"><ActionLink href="/settings/users" icon={UsersThree}>Manage people</ActionLink></div></section><section className="settings-section" id="review"><div><h2>Review rules</h2><p>These safeguards keep a shipment decision tied to the checks and evidence that support it.</p></div><div className="settings-rule-list"><div><strong>Open checks before release</strong><span>Required · A shipment cannot be authorized while a check is unresolved.</span></div><div><strong>Supervisor decision record</strong><span>Required for holds, reviews, and any decision update.</span></div><Button variant="secondary" onClick={() => jumpTo("review")}>Review safeguards</Button></div></section></div></div></div>;
+  const result = useQuery({ queryKey: ["workspace-settings"], queryFn: fetchWorkspaceSettings });
+  const organization = result.data?.organization as Record<string, unknown> | undefined;
+  return <div className="operations-page"><PageHeader icon={Gear} title="Workspace settings" description="Configure how this organization prepares, reviews, and releases shipment cases." /><div className="settings-overview-grid"><section className="data-panel"><div className="data-panel__header"><div><h2>Configuration</h2><p>Each category saves a real workspace setting and records an audit event.</p></div></div><div className="settings-card-list">{categories.map(([href, title, description]) => <Link className="settings-card" href={href} key={href}><div><strong>{title}</strong><span>{description}</span></div><span aria-hidden="true">›</span></Link>)}</div></section><aside className="settings-context-rail"><div className="context-rail__eyebrow">Workspace</div><h2>{String(organization?.name || "GateGuard Operations")}</h2><dl><div><dt>Code</dt><dd>{String(organization?.code || "—")}</dd></div><div><dt>Timezone</dt><dd>{String(organization?.default_timezone || "UTC")}</dd></div><div><dt>Currency</dt><dd>{String(organization?.default_currency || "USD")}</dd></div><div><dt>Security posture</dt><dd>Server-side sessions</dd></div></dl><div className="context-rail__links"><Link href="/settings/people"><UsersThree size={16} /> People and access</Link><Link href="/settings/security"><LockKey size={16} /> Security</Link></div></aside></div></div>;
 }

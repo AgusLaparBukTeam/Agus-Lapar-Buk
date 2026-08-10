@@ -1,6 +1,6 @@
 "use client";
 
-import { MagnifyingGlass, Package, Plus } from "@phosphor-icons/react";
+import { MagnifyingGlassIcon as MagnifyingGlass, PackageIcon as Package, PlusIcon as Plus } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";

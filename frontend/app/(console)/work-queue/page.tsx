@@ -1,6 +1,6 @@
 "use client";
 
-import { ListChecks, MagnifyingGlass } from "@phosphor-icons/react";
+import { ListChecksIcon as ListChecks, MagnifyingGlassIcon as MagnifyingGlass } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";

@@ -1,6 +1,6 @@
 "use client";
 
-import { UserList } from "@phosphor-icons/react";
+import { UserListIcon as UserList } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";

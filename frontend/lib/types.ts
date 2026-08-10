@@ -15,6 +15,7 @@ export interface CurrentUser {
   created_at: string;
   updated_at: string;
   last_login_at?: string | null;
+  must_change_password?: boolean;
 }
 
 export interface EvidenceRegion {

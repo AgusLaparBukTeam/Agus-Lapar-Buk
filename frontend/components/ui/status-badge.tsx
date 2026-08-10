@@ -1,4 +1,4 @@
-import { CheckCircle, Warning, WarningOctagon } from "@phosphor-icons/react";
+import { CheckCircleIcon as CheckCircle, WarningIcon as Warning, WarningOctagonIcon as WarningOctagon } from "@phosphor-icons/react";
 import type { ReconciliationStatus } from "@/lib/types";
 
 export function StatusBadge({ status }: { status: ReconciliationStatus }) {
