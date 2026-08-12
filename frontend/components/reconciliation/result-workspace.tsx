@@ -122,7 +122,7 @@ export function ResultWorkspace({
                     <tr>
                       <th className="px-3 py-2 font-medium">Dokumen</th>
                       <th className="px-3 py-2 font-medium">Nilai</th>
-                      <th className="px-3 py-2 font-medium">Confidence</th>
+                      <th className="px-3 py-2 font-medium">Tingkat keyakinan</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -144,13 +144,13 @@ export function ResultWorkspace({
               )}
               <details className="border-t border-[var(--border)]">
                 <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-xs font-medium">
-                  Provenance & detail teknis <CaretDown size={14} />
+                  Sumber bukti & detail teknis <CaretDown size={14} />
                 </summary>
                 <div className="space-y-2 px-3 pb-3 text-xs text-[var(--subtle)]">
                   {selected.evidence.map((ev, i) => (
                     <div key={i}>
                       <span className="font-medium text-[var(--text)]">{docLabels[ev.document_type]}</span>
-                      {" · "}{ev.field} · {ev.evidence.length} region
+                      {" · "}{ev.field} · {ev.evidence.length} area bukti
                     </div>
                   ))}
                 </div>
@@ -166,7 +166,7 @@ export function ResultWorkspace({
                 <div className="mt-1 text-blue-800">Supervisor: {result.audit.overridden_by}</div>
               )}
               <div className="mt-1 text-blue-700">
-                Keputusan sistem asli tetap: {result.audit.system_decision} · {result.audit.override_history.length} event audit
+                Keputusan sistem asli tetap: {result.audit.system_decision} · {result.audit.override_history.length} peristiwa audit
               </div>
             </section>
           )}
@@ -217,7 +217,7 @@ function OverrideDialog({
             <p className="mt-1 text-xs text-[var(--subtle)]">Keputusan sistem asli akan tetap disimpan untuk audit.</p>
           </div>
         </div>
-        <p className="mt-4 rounded-md bg-blue-50 p-3 text-xs text-blue-900">Identity override diambil dari akun supervisor yang sedang login dan dicatat otomatis.</p>
+        <p className="mt-4 rounded-md bg-blue-50 p-3 text-xs text-blue-900">Identitas pemberi override diambil dari akun supervisor yang sedang login dan dicatat otomatis.</p>
         <label className="mt-3 block text-xs font-medium">
           Keputusan akhir
           <select value={decision} onChange={(e) => setDecision(e.target.value as ReconciliationStatus)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-white px-2">

@@ -7,34 +7,175 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+import pdfplumber
 from pypdf import PdfReader
+from rapidfuzz.fuzz import ratio
 
 from app.core.config import Settings
 from app.core.errors import ExtractionUnavailableError, ProviderError
 from app.domain.models import (
     DocumentField,
     DocumentType,
+    EvidenceRegion,
     ShipmentDocument,
     ShipmentItem,
 )
 from app.services.file_validation import SafeUpload
+from app.services.preprocessing import preprocess_upload
 
 logger = logging.getLogger(__name__)
 
 MAX_EXTRACTED_FIELD_CHARS = 2_000
 MAX_LINE_ITEMS = 2_000
 MAX_ABS_NUMERIC = Decimal("1e24")
+EVIDENCE_MATCH_THRESHOLD = 88.0
 
 
-def field(value: Any, raw: str | None = None, confidence: float = 0.0, source: str = "parser"):
+@dataclass(frozen=True)
+class WordBox:
+    page: int
+    x: float
+    y: float
+    width: float
+    height: float
+    text: str
+
+
+def _normalise_evidence_text(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _evidence_for_value(value: Any, word_boxes: list[WordBox]) -> list[EvidenceRegion]:
+    """Return one high-confidence source region without inventing a location."""
+
+    needle = _normalise_evidence_text(value)
+    if not needle:
+        return []
+    exact = [box for box in word_boxes if _normalise_evidence_text(box.text) == needle]
+    candidates = exact or [
+        box
+        for box in word_boxes
+        if ratio(needle, _normalise_evidence_text(box.text)) >= EVIDENCE_MATCH_THRESHOLD
+    ]
+    if not candidates:
+        return []
+    best = max(candidates, key=lambda box: ratio(needle, _normalise_evidence_text(box.text)))
+    return [
+        EvidenceRegion(
+            page=best.page,
+            x=best.x,
+            y=best.y,
+            width=best.width,
+            height=best.height,
+            text=best.text[:500],
+        )
+    ]
+
+
+def _document_evidence(doc: ShipmentDocument, word_boxes: list[WordBox]) -> ShipmentDocument:
+    """Correlate structured values with trustworthy source words after extraction."""
+
+    for name in (
+        "document_id",
+        "shipment_id",
+        "sender",
+        "recipient",
+        "destination",
+        "document_total",
+    ):
+        field_value = getattr(doc, name)
+        if field_value.value is not None and not field_value.evidence:
+            field_value.evidence = _evidence_for_value(
+                field_value.raw_value or field_value.value,
+                word_boxes,
+            )
+    for item in doc.items:
+        for name in ("sku", "description", "quantity", "unit_price", "line_total"):
+            field_value = getattr(item, name)
+            if field_value.value is not None and not field_value.evidence:
+                field_value.evidence = _evidence_for_value(
+                    field_value.raw_value or field_value.value,
+                    word_boxes,
+                )
+    return doc
+
+
+def _fields_as_word_boxes(doc: ShipmentDocument) -> list[WordBox]:
+    """Reuse corroborated OCR regions when OpenAI needs a separate evidence layer."""
+
+    boxes: list[WordBox] = []
+    fields = [
+        doc.document_id,
+        doc.shipment_id,
+        doc.sender,
+        doc.recipient,
+        doc.destination,
+        doc.document_total,
+    ]
+    for item in doc.items:
+        fields.extend([item.sku, item.description, item.quantity, item.unit_price, item.line_total])
+    for field_value in fields:
+        for evidence in field_value.evidence:
+            if evidence.text:
+                boxes.append(
+                    WordBox(
+                        page=evidence.page,
+                        x=evidence.x,
+                        y=evidence.y,
+                        width=evidence.width,
+                        height=evidence.height,
+                        text=evidence.text,
+                    )
+                )
+    return boxes
+
+
+def _pdf_word_boxes(data: bytes, max_pages: int) -> list[WordBox]:
+    """Read PDF word coordinates and normalize them to the frontend's 0..1 contract."""
+
+    word_boxes: list[WordBox] = []
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        if len(pdf.pages) > max_pages:
+            raise ExtractionUnavailableError(f"PDF exceeds the {max_pages}-page processing limit.")
+        for page_number, page in enumerate(pdf.pages, start=1):
+            if not page.width or not page.height:
+                continue
+            for word in page.extract_words() or []:
+                text = str(word.get("text", "")).strip()
+                x0, top = float(word.get("x0", 0)), float(word.get("top", 0))
+                x1, bottom = float(word.get("x1", 0)), float(word.get("bottom", 0))
+                if not text or x1 <= x0 or bottom <= top:
+                    continue
+                word_boxes.append(
+                    WordBox(
+                        page=page_number,
+                        x=max(0.0, min(1.0, x0 / float(page.width))),
+                        y=max(0.0, min(1.0, top / float(page.height))),
+                        width=max(0.0001, min(1.0, (x1 - x0) / float(page.width))),
+                        height=max(0.0001, min(1.0, (bottom - top) / float(page.height))),
+                        text=text,
+                    )
+                )
+    return word_boxes
+
+
+def field(
+    value: Any,
+    raw: str | None = None,
+    confidence: float = 0.0,
+    source: str = "parser",
+    evidence: list[EvidenceRegion] | None = None,
+) -> DocumentField:
     return DocumentField(
         value=value,
         raw_value=raw or (str(value) if value is not None else None),
         confidence=confidence,
+        evidence=evidence or [],
         source=source,
     )
 
@@ -59,7 +200,7 @@ class LocalPdfExtractor(Extractor):
                 "Configure OpenAI or PaddleOCR for images."
             )
 
-        def read_text() -> str:
+        def read_text() -> tuple[str, list[WordBox]]:
             reader = PdfReader(io.BytesIO(upload.data), strict=False)
             if reader.is_encrypted:
                 raise ExtractionUnavailableError("Encrypted PDFs are not supported.")
@@ -77,12 +218,12 @@ class LocalPdfExtractor(Extractor):
                         "PDF text exceeds the configured processing safety limit."
                     )
                 chunks.append(chunk)
-            return "\n".join(chunks)
+            return "\n".join(chunks), _pdf_word_boxes(upload.data, self.max_pages)
 
         try:
-            # pypdf is synchronous and CPU-heavy on malformed/complex documents.
+            # PDF parsing is synchronous and CPU-heavy on malformed/complex documents.
             # Keep it off the ASGI event loop.
-            text = await asyncio.to_thread(read_text)
+            text, word_boxes = await asyncio.to_thread(read_text)
         except ExtractionUnavailableError:
             raise
         except Exception as exc:
@@ -92,7 +233,10 @@ class LocalPdfExtractor(Extractor):
             raise ExtractionUnavailableError(
                 "No usable text layer was found. Configure OCR or multimodal extraction."
             )
-        return parse_shipment_text(text, document_type, upload.filename)
+        return _document_evidence(
+            parse_shipment_text(text, document_type, upload.filename),
+            word_boxes,
+        )
 
 
 LABELS = {
@@ -460,7 +604,7 @@ class OpenAIExtractor(Extractor):
         except ValueError as exc:
             raise ProviderError("The AI provider returned an invalid document type.") from exc
 
-        return ShipmentDocument(
+        document = ShipmentDocument(
             document_type=document_type,
             filename=upload.filename,
             detected_document_type=detected,
@@ -475,6 +619,26 @@ class OpenAIExtractor(Extractor):
             items=items,
             extraction_provider=f"openai:{self.settings.openai_model}",
         )
+        try:
+            if upload.media_type == "application/pdf":
+                return _document_evidence(
+                    document,
+                    await asyncio.to_thread(
+                        _pdf_word_boxes,
+                        upload.data,
+                        self.settings.max_pdf_pages,
+                    ),
+                )
+            # Vision models do not expose source coordinates.  Use PaddleOCR as an
+            # independent evidence layer when it is installed; missing OCR evidence is
+            # intentionally represented as an empty list rather than a guessed box.
+            ocr_document = await PaddleExtractor(self.settings).extract(upload, document_type)
+            return _document_evidence(document, _fields_as_word_boxes(ocr_document))
+        except (ExtractionUnavailableError, ProviderError):
+            return document
+        except Exception:
+            logger.info("openai_evidence_correlation_unavailable")
+            return document
 
 
 def _response_output_text(body: dict[str, Any]) -> str:
@@ -530,6 +694,72 @@ def _paddle_text(payload: Any) -> str:
     if isinstance(payload, list):
         return "\n".join(filter(None, (_paddle_text(item) for item in payload)))
     return ""
+
+
+def _paddle_box_bounds(raw_box: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(raw_box, (list, tuple)):
+        return None
+    values: list[float] = []
+    for value in raw_box:
+        if isinstance(value, (list, tuple)):
+            values.extend(float(item) for item in value if isinstance(item, (int, float)))
+        elif isinstance(value, (int, float)):
+            values.append(float(value))
+    if len(values) < 4:
+        return None
+    xs = values[::2]
+    ys = values[1::2]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
+
+
+def _paddle_word_boxes(payload: Any) -> list[WordBox]:
+    """Read common PP-StructureV3 OCR text/box layouts without depending on internals."""
+
+    boxes: list[WordBox] = []
+
+    def visit(value: Any, page: int = 1) -> None:
+        if isinstance(value, dict):
+            texts = value.get("rec_texts") or value.get("texts")
+            raw_boxes = value.get("rec_boxes") or value.get("rec_polys") or value.get("boxes")
+            if isinstance(texts, list) and isinstance(raw_boxes, list):
+                dimensions = value.get("input_img_shape") or value.get("image_shape") or []
+                numeric_dimensions = [
+                    float(item) for item in dimensions if isinstance(item, (int, float))
+                ]
+                height = numeric_dimensions[-2] if len(numeric_dimensions) >= 2 else 0.0
+                width = numeric_dimensions[-1] if len(numeric_dimensions) >= 2 else 0.0
+                parsed = [item for item in (_paddle_box_bounds(item) for item in raw_boxes) if item]
+                if not width or not height:
+                    width = max((item[2] for item in parsed), default=0.0)
+                    height = max((item[3] for item in parsed), default=0.0)
+                if width > 0 and height > 0:
+                    for text, bounds in zip(texts, raw_boxes, strict=False):
+                        parsed_bounds = _paddle_box_bounds(bounds)
+                        if not parsed_bounds or not str(text).strip():
+                            continue
+                        x0, y0, x1, y1 = parsed_bounds
+                        boxes.append(
+                            WordBox(
+                                page=page,
+                                x=max(0.0, min(1.0, x0 / width)),
+                                y=max(0.0, min(1.0, y0 / height)),
+                                width=max(0.0001, min(1.0, (x1 - x0) / width)),
+                                height=max(0.0001, min(1.0, (y1 - y0) / height)),
+                                text=str(text).strip(),
+                            )
+                        )
+            for nested in value.values():
+                if isinstance(nested, (dict, list)):
+                    visit(nested, page)
+        elif isinstance(value, list):
+            for index, nested in enumerate(value, start=1):
+                if isinstance(nested, (dict, list)):
+                    visit(nested, index if isinstance(nested, dict) else page)
+
+    visit(payload)
+    return boxes
 
 
 def _mark_uncalibrated_model_evidence(
@@ -600,6 +830,7 @@ class PaddleExtractor(Extractor):
                 pipeline = self._get_pipeline()
                 results = pipeline.predict(tmp.name)
                 chunks: list[str] = []
+                word_boxes: list[WordBox] = []
                 for result in results:
                     # JSON is Paddle's stable interchange boundary. Consume only OCR/layout text;
                     # never stringify arbitrary metadata into the shipment parser.
@@ -608,6 +839,7 @@ class PaddleExtractor(Extractor):
                         if callable(payload):
                             payload = payload()
                         text = _paddle_text(payload)
+                        word_boxes.extend(_paddle_word_boxes(payload))
                         if text:
                             chunks.append(text)
                     except Exception:
@@ -615,7 +847,10 @@ class PaddleExtractor(Extractor):
                 text = "\n".join(chunks)
                 if len(text.strip()) < 20:
                     raise ExtractionUnavailableError("PaddleOCR returned no usable document text.")
-                parsed = parse_shipment_text(text, document_type, upload.filename)
+                parsed = _document_evidence(
+                    parse_shipment_text(text, document_type, upload.filename),
+                    word_boxes,
+                )
                 parsed.extraction_provider = "paddle:PPStructureV3"
                 # OCR/model confidence is not assumed calibrated. Until confidence calibration is
                 # validated on a representative corpus, model-only evidence forces REVIEW.
@@ -655,13 +890,20 @@ class ExtractionRouter:
         self.paddle = PaddleExtractor(settings)
 
     async def extract(self, upload: SafeUpload, document_type: DocumentType) -> ShipmentDocument:
+        extraction_upload, preprocessing = await asyncio.to_thread(preprocess_upload, upload)
+
+        async def finish(document: ShipmentDocument) -> ShipmentDocument:
+            document.preprocessing_applied = preprocessing.applied
+            document.preprocessing_operations = list(preprocessing.operations)
+            return document
+
         provider = self.settings.extraction_provider
         if provider == "local":
-            return await self.local.extract(upload, document_type)
+            return await finish(await self.local.extract(extraction_upload, document_type))
         if provider == "openai":
-            return await self.openai.extract(upload, document_type)
+            return await finish(await self.openai.extract(extraction_upload, document_type))
         if provider == "paddle":
-            return await self.paddle.extract(upload, document_type)
+            return await finish(await self.paddle.extract(extraction_upload, document_type))
 
         # AUTO: try local text extraction first for PDFs. Only use a model when necessary.
         local_error: Exception | None = None
@@ -669,12 +911,12 @@ class ExtractionRouter:
             try:
                 doc = await self.local.extract(upload, document_type)
                 if _critical_complete(doc, self.settings.critical_confidence_threshold):
-                    return doc
+                    return await finish(doc)
             except ExtractionUnavailableError as exc:
                 local_error = exc
 
         if self.settings.openai_api_key:
-            return await self.openai.extract(upload, document_type)
+            return await finish(await self.openai.extract(extraction_upload, document_type))
 
         # If Paddle is explicitly available in the environment, use it.
         try:
@@ -682,7 +924,7 @@ class ExtractionRouter:
         except ImportError:
             pass
         else:
-            return await self.paddle.extract(upload, document_type)
+            return await finish(await self.paddle.extract(extraction_upload, document_type))
 
         if upload.media_type == "application/pdf" and local_error is None:
             # Local extraction returned partial evidence; fail explicitly rather than

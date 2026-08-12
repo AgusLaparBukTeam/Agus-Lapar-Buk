@@ -724,9 +724,9 @@ class ReconciliationRepository:
                 term = f"%{query.strip()}%"
                 filters.append(
                     or_(
-                        ShipmentCaseRow.internal_reference.like(term),
-                        ShipmentCaseRow.external_reference.like(term),
-                        ShipmentCaseRow.destination.like(term),
+                        ShipmentCaseRow.internal_reference.ilike(term),
+                        ShipmentCaseRow.external_reference.ilike(term),
+                        ShipmentCaseRow.destination.ilike(term),
                     )
                 )
             rows = list(
@@ -1231,6 +1231,7 @@ class ReconciliationRepository:
                 for r in results
             )
             processing = [r.processing_ms for r in results]
+            protected_value = sum(result.estimated_discrepancy_total for result in results)
             return {
                 "reconciliations_today": len(results),
                 "clear_today": counts[ReconciliationStatus.CLEAR],
@@ -1239,6 +1240,7 @@ class ReconciliationRepository:
                 "awaiting_review": awaiting,
                 "overridden": sum(bool(r.audit.override_history) for r in results),
                 "average_processing_ms": sum(processing) / len(processing) if processing else 0,
+                "total_discrepancy_prevented": round(protected_value, 2),
                 "recent": results[:8],
             }
 
