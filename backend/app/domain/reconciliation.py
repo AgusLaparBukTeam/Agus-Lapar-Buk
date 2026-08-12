@@ -299,7 +299,11 @@ def reconcile(
         totals = [value for _, _, value in total_fields]
         total_delta = max(totals) - min(totals)
         invoice_total = next(
-            ((doc, value) for doc, _, value in total_fields if doc.document_type == DocumentType.INVOICE),
+            (
+                (doc, value)
+                for doc, _, value in total_fields
+                if doc.document_type == DocumentType.INVOICE
+            ),
             None,
         )
         fallback_total = invoice_total or (total_fields[0][0], total_fields[0][2])

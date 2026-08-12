@@ -1044,7 +1044,10 @@ class OperationsRepository:
                     select(ShipmentItemRow)
                     .where(
                         ShipmentItemRow.organization_id == organization_id,
-                        or_(ShipmentItemRow.sku.ilike(term), ShipmentItemRow.description.ilike(term)),
+                        or_(
+                            ShipmentItemRow.sku.ilike(term),
+                            ShipmentItemRow.description.ilike(term),
+                        ),
                     )
                     .limit(bounded)
                 )
