@@ -7,14 +7,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
-import { createUser, fetchUsers, updateUser } from "@/lib/api";
+import { isAdministrator } from "@/lib/access";
+import { createUser, fetchMe, fetchUsers, updateUser } from "@/lib/api";
 
 export default function PeoplePage() {
   const client = useQueryClient();
-  const result = useQuery({ queryKey: ["users"], queryFn: fetchUsers });
+  const currentUser = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe, retry: false });
+  const canManagePeople = isAdministrator(currentUser.data?.role);
+  const result = useQuery({ queryKey: ["users"], queryFn: fetchUsers, enabled: canManagePeople });
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ display_name: "", email: "", password: "", role: "operator" });
   const mutation = useMutation({ mutationFn: () => createUser(form), onSuccess: () => { setOpen(false); setForm({ display_name: "", email: "", password: "", role: "operator" }); client.invalidateQueries({ queryKey: ["users"] }); } });
+  if (currentUser.isPending) return <main className="grid min-h-screen place-items-center text-sm text-[var(--subtle)]">Memuat sesi GateGuard…</main>;
+  if (!canManagePeople) return <div role="alert" className="notice notice--danger">People and access is only available to administrators.</div>;
+
   const users = result.data || [];
   const active = users.filter((item) => item.active);
   const operators = users.filter((item) => item.role === "operator");
