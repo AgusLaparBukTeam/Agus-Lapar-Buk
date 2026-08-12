@@ -297,6 +297,7 @@ class ShipmentDocumentRow(Base):
         String(36), ForeignKey("shipment_cases.id", ondelete="CASCADE"), index=True
     )
     document_type: Mapped[str] = mapped_column(String(48), index=True)
+    document_reference: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     requirement_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     current_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(24), index=True)
@@ -970,9 +971,9 @@ class OperationsRepository:
                     .where(
                         ShipmentCaseRow.organization_id == organization_id,
                         or_(
-                            ShipmentCaseRow.internal_reference.like(term),
-                            ShipmentCaseRow.external_reference.like(term),
-                            ShipmentCaseRow.destination.like(term),
+                            ShipmentCaseRow.internal_reference.ilike(term),
+                            ShipmentCaseRow.external_reference.ilike(term),
+                            ShipmentCaseRow.destination.ilike(term),
                         ),
                     )
                     .order_by(ShipmentCaseRow.updated_at.desc())
@@ -993,9 +994,17 @@ class OperationsRepository:
                 session.execute(
                     select(ShipmentDocumentRow, ShipmentCaseRow)
                     .join(ShipmentCaseRow, ShipmentCaseRow.id == ShipmentDocumentRow.shipment_id)
+                    .outerjoin(
+                        DocumentVersionRow,
+                        DocumentVersionRow.id == ShipmentDocumentRow.current_version_id,
+                    )
                     .where(
                         ShipmentDocumentRow.organization_id == organization_id,
-                        ShipmentDocumentRow.document_type.like(term),
+                        or_(
+                            ShipmentDocumentRow.document_type.ilike(term),
+                            ShipmentDocumentRow.document_reference.ilike(term),
+                            DocumentVersionRow.filename.ilike(term),
+                        ),
                     )
                     .limit(bounded)
                 )
@@ -1004,9 +1013,9 @@ class OperationsRepository:
                 {
                     "type": "document",
                     "id": doc.id,
-                    "label": doc.document_type,
+                    "label": doc.document_reference or doc.document_type,
                     "description": shipment.internal_reference,
-                    "href": "/documents",
+                    "href": f"/shipments/{shipment.id}",
                 }
                 for doc, shipment in documents
             )
@@ -1015,7 +1024,7 @@ class OperationsRepository:
                     select(TradePartyRow)
                     .where(
                         TradePartyRow.organization_id == organization_id,
-                        TradePartyRow.legal_name.like(term),
+                        TradePartyRow.legal_name.ilike(term),
                     )
                     .limit(bounded)
                 )
@@ -1035,7 +1044,7 @@ class OperationsRepository:
                     select(ShipmentItemRow)
                     .where(
                         ShipmentItemRow.organization_id == organization_id,
-                        or_(ShipmentItemRow.sku.like(term), ShipmentItemRow.description.like(term)),
+                        or_(ShipmentItemRow.sku.ilike(term), ShipmentItemRow.description.ilike(term)),
                     )
                     .limit(bounded)
                 )
@@ -1055,7 +1064,7 @@ class OperationsRepository:
                     select(ShipmentExceptionRow)
                     .where(
                         ShipmentExceptionRow.organization_id == organization_id,
-                        ShipmentExceptionRow.summary.like(term),
+                        ShipmentExceptionRow.summary.ilike(term),
                     )
                     .limit(bounded)
                 )
@@ -1076,7 +1085,7 @@ class OperationsRepository:
                     .join(ShipmentCaseRow, ShipmentCaseRow.id == ReleaseDecisionRow.shipment_id)
                     .where(
                         ShipmentCaseRow.organization_id == organization_id,
-                        ReleaseDecisionRow.reason.like(term),
+                        ReleaseDecisionRow.reason.ilike(term),
                     )
                     .limit(bounded)
                 )
@@ -1098,7 +1107,7 @@ class OperationsRepository:
                         .join(WorkspaceMembershipRow, WorkspaceMembershipRow.user_id == UserRow.id)
                         .where(
                             WorkspaceMembershipRow.organization_id == organization_id,
-                            or_(UserRow.display_name.like(term), UserRow.email.like(term)),
+                            or_(UserRow.display_name.ilike(term), UserRow.email.ilike(term)),
                         )
                         .limit(bounded)
                     )
@@ -1119,7 +1128,7 @@ class OperationsRepository:
                             select(RulePackRow)
                             .where(
                                 RulePackRow.organization_id == organization_id,
-                                RulePackRow.name.like(term),
+                                RulePackRow.name.ilike(term),
                             )
                             .limit(bounded)
                         )
@@ -1139,7 +1148,7 @@ class OperationsRepository:
                             select(IntegrationConnectionRow)
                             .where(
                                 IntegrationConnectionRow.organization_id == organization_id,
-                                IntegrationConnectionRow.name.like(term),
+                                IntegrationConnectionRow.name.ilike(term),
                             )
                             .limit(bounded)
                         )
@@ -1167,8 +1176,8 @@ class OperationsRepository:
                 term = f"%{query.strip()}%"
                 stmt = stmt.where(
                     or_(
-                        TradePartyRow.legal_name.like(term),
-                        TradePartyRow.external_identifier.like(term),
+                        TradePartyRow.legal_name.ilike(term),
+                        TradePartyRow.external_identifier.ilike(term),
                     )
                 )
             rows = list(
@@ -1266,8 +1275,8 @@ class OperationsRepository:
                 term = f"%{query.strip()}%"
                 stmt = stmt.where(
                     or_(
-                        ShipmentItemRow.sku.like(term),
-                        ShipmentItemRow.description.like(term),
+                        ShipmentItemRow.sku.ilike(term),
+                        ShipmentItemRow.description.ilike(term),
                         ShipmentCaseRow.internal_reference.like(term),
                     )
                 )

@@ -114,6 +114,8 @@ class ShipmentDocument(BaseModel):
     document_total: DocumentField = Field(default_factory=DocumentField)
     items: list[ShipmentItem] = Field(default_factory=list, max_length=10_000)
     extraction_provider: str = Field(default="unknown", max_length=120)
+    preprocessing_applied: bool = False
+    preprocessing_operations: list[str] = Field(default_factory=list, max_length=8)
 
 
 class EvidenceValue(BaseModel):
@@ -172,6 +174,19 @@ class ReconciliationResult(BaseModel):
     def effective_status(self) -> ReconciliationStatus:
         """Operational decision after supervisor overrides; status remains the system decision."""
         return self.audit.final_decision or self.status
+
+    @computed_field
+    @property
+    def estimated_discrepancy_total(self) -> float:
+        """Total value of material discrepancies with a usable price basis."""
+        return round(
+            sum(
+                mismatch.estimated_discrepancy_value or 0.0
+                for mismatch in self.mismatches
+                if mismatch.estimated_discrepancy_value is not None
+            ),
+            2,
+        )
 
 
 class OverrideRequest(BaseModel):
@@ -342,6 +357,7 @@ class DashboardSummary(BaseModel):
     awaiting_review: int
     overridden: int
     average_processing_ms: float
+    total_discrepancy_prevented: float = 0.0
     recent: list[ReconciliationResult]
     readiness: dict[str, str]
 

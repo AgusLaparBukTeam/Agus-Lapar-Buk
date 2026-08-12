@@ -296,6 +296,15 @@ def reconcile(
         if parsed_total is not None:
             total_fields.append((doc, doc.document_total, parsed_total))
     if len(total_fields) >= 2 and len({value for _, _, value in total_fields}) > 1:
+        totals = [value for _, _, value in total_fields]
+        total_delta = max(totals) - min(totals)
+        invoice_total = next(
+            ((doc, value) for doc, _, value in total_fields if doc.document_type == DocumentType.INVOICE),
+            None,
+        )
+        fallback_total = invoice_total or (total_fields[0][0], total_fields[0][2])
+        price_source = fallback_total[0].document_type
+        estimated = float(abs(total_delta)) if total_delta.is_finite() else None
         mismatches.append(
             _mismatch(
                 MismatchType.TOTAL_MISMATCH,
@@ -303,6 +312,8 @@ def reconcile(
                 "document_total",
                 "Trusted monetary totals differ across documents.",
                 [_ev(doc, "document_total", field) for doc, field, _ in total_fields],
+                estimated,
+                price_source,
             )
         )
 
@@ -464,7 +475,11 @@ def reconcile(
             q_nums = [q for q in q_values if q is not None]
             delta = max(q_nums) - min(q_nums)
             price, price_source = _trusted_price(docs, sku, confidence_threshold)
-            estimated = float(abs(delta * price)) if price is not None else None
+            estimated = (
+                float(abs(delta * price))
+                if price is not None and price.is_finite() and price > 0
+                else None
+            )
             # Any cross-document quantity mismatch is operationally material.
             mismatches.append(
                 _mismatch(
