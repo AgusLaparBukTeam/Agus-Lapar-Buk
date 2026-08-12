@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { DocumentViewer } from "@/components/document-viewer/document-viewer";
 import { Button } from "@/components/ui/button";
 import { AppSelect } from "@/components/ui/select";
+import { Dialog } from "@cloudflare/kumo/components/dialog";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { overrideDecision } from "@/lib/api";
 import { fetchMe } from "@/lib/api";
@@ -20,10 +21,9 @@ const docLabels: Record<DocumentType, string> = {
 };
 
 function severityClass(severity: string) {
-  if (severity === "CRITICAL") return "text-red-700 bg-red-50 border-red-200";
-  if (severity === "HIGH") return "text-orange-800 bg-orange-50 border-orange-200";
-  if (severity === "MEDIUM") return "text-amber-900 bg-amber-50 border-amber-200";
-  return "text-slate-700 bg-slate-50 border-slate-200";
+  if (severity === "CRITICAL" || severity === "HIGH") return "text-kumo-danger bg-kumo-danger-tint border-kumo-danger";
+  if (severity === "MEDIUM") return "text-kumo-warning bg-kumo-warning-tint border-kumo-warning";
+  return "text-kumo-neutral-750 bg-kumo-recessed border-kumo-line";
 }
 
 export function ResultWorkspace({
@@ -56,13 +56,13 @@ export function ResultWorkspace({
 
   return (
     <div>
-      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-kumo-line bg-kumo-base">
         <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <StatusBadge status={effectiveStatus} />
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{result.reason}</div>
-              <div className="text-xs text-[var(--subtle)]">
+              <div className="text-sm text-kumo-neutral-750">
                 {result.mismatches.length} isu · {result.processing_ms} ms · <span className="mono">{result.session_id.slice(0, 8)}</span>
               </div>
             </div>
@@ -80,17 +80,17 @@ export function ResultWorkspace({
         </div>
 
         <aside className="lg:col-span-5">
-          <section className="rounded-lg border border-[var(--border)] bg-white">
-            <div className="border-b border-[var(--border)] p-3">
+          <section className="rounded-md border border-kumo-line bg-kumo-base">
+            <div className="border-b border-kumo-line p-3">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">Temuan rekonsiliasi</h2>
-                <span className="text-xs text-[var(--subtle)]">{result.mismatches.length} temuan</span>
+                <span className="text-sm text-kumo-neutral-750">{result.mismatches.length} temuan</span>
               </div>
-              <p className="mt-1 text-xs text-[var(--subtle)]">{result.recommended_action}</p>
+              <p className="mt-1 text-sm text-kumo-neutral-750">{result.recommended_action}</p>
             </div>
 
             {result.mismatches.length === 0 ? (
-              <div className="flex items-center gap-3 p-4 text-sm text-green-800">
+              <div className="flex items-center gap-3 p-4 text-sm text-kumo-success">
                 <ShieldCheck size={18} /> Tidak ada konflik material yang terdeteksi.
               </div>
             ) : (
@@ -99,13 +99,13 @@ export function ResultWorkspace({
                   <button
                     key={mismatch.id}
                     onClick={() => chooseMismatch(mismatch)}
-                    className={`w-full border-b border-[var(--border)] p-3 text-left last:border-0 hover:bg-[var(--muted)] ${selected?.id === mismatch.id ? "bg-[var(--muted)]" : ""}`}
+                    className={`w-full border-b border-kumo-line p-3 text-left last:border-0 hover:bg-kumo-tint ${selected?.id === mismatch.id ? "bg-kumo-recessed" : ""}`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold">{mismatch.type.replaceAll("_", " ")}</span>
-                      <span className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold ${severityClass(mismatch.severity)}`}>{mismatch.severity}</span>
+                      <span className="text-sm font-medium">{mismatch.type.replaceAll("_", " ")}</span>
+                      <span className={`rounded border px-1.5 py-0.5 text-sm font-medium ${severityClass(mismatch.severity)}`}>{mismatch.severity}</span>
                     </div>
-                    <p className="mt-1 text-xs text-[var(--subtle)]">{mismatch.explanation}</p>
+                    <p className="mt-1 text-sm text-kumo-neutral-750">{mismatch.explanation}</p>
                   </button>
                 ))}
               </div>
@@ -113,13 +113,13 @@ export function ResultWorkspace({
           </section>
 
           {selected && (
-            <section className="mt-3 overflow-hidden rounded-lg border border-[var(--border)] bg-white">
-              <div className="border-b border-[var(--border)] px-3 py-2.5">
+            <section className="mt-3 overflow-hidden rounded-md border border-kumo-line bg-kumo-base">
+              <div className="border-b border-kumo-line px-3 py-2.5">
                 <h3 className="text-sm font-semibold">Perbandingan bukti</h3>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-xs">
-                  <thead className="bg-[var(--muted)] text-left">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="bg-kumo-recessed text-left">
                     <tr>
                       <th className="px-3 py-2 font-medium">Dokumen</th>
                       <th className="px-3 py-2 font-medium">Nilai</th>
@@ -128,7 +128,7 @@ export function ResultWorkspace({
                   </thead>
                   <tbody>
                     {selected.evidence.map((ev, index) => (
-                      <tr key={`${ev.document_type}-${index}`} className="border-t border-[var(--border)]">
+                      <tr key={`${ev.document_type}-${index}`} className="border-t border-kumo-line">
                         <td className="px-3 py-2">{docLabels[ev.document_type]}</td>
                         <td className="max-w-56 break-words px-3 py-2 font-medium">{String(ev.value ?? "—")}</td>
                         <td className="px-3 py-2 mono">{Math.round(ev.confidence * 100)}%</td>
@@ -138,19 +138,19 @@ export function ResultWorkspace({
                 </table>
               </div>
               {selected.estimated_discrepancy_value != null && (
-                <div className="border-t border-[var(--border)] bg-amber-50 px-3 py-2 text-xs">
+                <div className="border-t border-kumo-line bg-kumo-warning-tint px-3 py-2 text-sm text-kumo-warning">
                   Estimasi nilai selisih: <strong>Rp {selected.estimated_discrepancy_value.toLocaleString("id-ID")}</strong>
                   {selected.estimate_price_source ? ` · harga dari ${docLabels[selected.estimate_price_source]}` : ""}
                 </div>
               )}
-              <details className="border-t border-[var(--border)]">
-                <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-xs font-medium">
+              <details className="border-t border-kumo-line">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-sm font-medium">
                   Sumber bukti & detail teknis <CaretDown size={14} />
                 </summary>
-                <div className="space-y-2 px-3 pb-3 text-xs text-[var(--subtle)]">
+                <div className="space-y-2 px-3 pb-3 text-sm text-kumo-neutral-750">
                   {selected.evidence.map((ev, i) => (
                     <div key={i}>
-                      <span className="font-medium text-[var(--text)]">{docLabels[ev.document_type]}</span>
+                      <span className="font-medium text-kumo-contrast">{docLabels[ev.document_type]}</span>
                       {" · "}{ev.field} · {ev.evidence.length} area bukti
                     </div>
                   ))}
@@ -160,13 +160,13 @@ export function ResultWorkspace({
           )}
 
           {result.audit.final_decision && (
-            <section className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs">
+            <section className="mt-3 rounded-md border border-kumo-info bg-kumo-info-tint p-3 text-sm text-kumo-info">
               <div className="font-semibold">Override tercatat: {result.audit.final_decision}</div>
               <div className="mt-1">{result.audit.override_reason}</div>
               {result.audit.overridden_by && (
-                <div className="mt-1 text-blue-800">Supervisor: {result.audit.overridden_by}</div>
+                <div className="mt-1 text-kumo-info">Supervisor: {result.audit.overridden_by}</div>
               )}
-              <div className="mt-1 text-blue-700">
+              <div className="mt-1 text-kumo-info">
                 Keputusan sistem asli tetap: {result.audit.system_decision} · {result.audit.override_history.length} peristiwa audit
               </div>
             </section>
@@ -209,21 +209,21 @@ function OverrideDialog({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="presentation">
-      <div role="dialog" aria-modal="true" aria-labelledby="override-title" className="w-full max-w-md rounded-lg border border-[var(--border)] bg-white p-4 shadow-xl">
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog className="override-dialog" size="base">
         <div className="flex items-start gap-3">
-          <WarningCircle className="mt-0.5 text-amber-700" size={20} />
+          <WarningCircle className="mt-0.5 text-kumo-warning" size={20} />
           <div>
-            <h2 id="override-title" className="font-semibold">Override keputusan sistem</h2>
-            <p className="mt-1 text-xs text-[var(--subtle)]">Keputusan sistem asli akan tetap disimpan untuk audit.</p>
+            <Dialog.Title>Override keputusan sistem</Dialog.Title>
+            <Dialog.Description>Keputusan sistem asli akan tetap disimpan untuk audit.</Dialog.Description>
           </div>
         </div>
-        <p className="mt-4 rounded-md bg-blue-50 p-3 text-xs text-blue-900">Identitas pemberi override diambil dari akun supervisor yang sedang login dan dicatat otomatis.</p>
-        <label className="mt-3 block text-xs font-medium">
+        <p className="override-dialog__notice">Identitas pemberi override diambil dari akun supervisor yang sedang login dan dicatat otomatis.</p>
+        <label className="override-dialog__field">
           Keputusan akhir
-          <AppSelect ariaLabel="Keputusan akhir" className="mt-1" value={decision} onValueChange={(value) => setDecision(value as ReconciliationStatus)} options={[{ value: "CLEAR", label: "CLEAR" }, { value: "REVIEW", label: "REVIEW" }, { value: "HOLD", label: "HOLD" }]} />
+          <AppSelect ariaLabel="Keputusan akhir" value={decision} onValueChange={(value) => setDecision(value as ReconciliationStatus)} options={[{ value: "CLEAR", label: "CLEAR" }, { value: "REVIEW", label: "REVIEW" }, { value: "HOLD", label: "HOLD" }]} />
         </label>
-        <label className="mt-3 block text-xs font-medium">
+        <label className="override-dialog__field">
           Alasan override
           <textarea
             value={reason}
@@ -231,19 +231,19 @@ function OverrideDialog({
             rows={4}
             maxLength={1000}
             placeholder="Jelaskan verifikasi atau koreksi yang dilakukan…"
-            className="mt-1 w-full resize-none rounded-md border border-[var(--border)] p-2"
           />
         </label>
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="form-panel__actions">
           <Button variant="secondary" onClick={onClose}>Batal</Button>
           <Button
+            variant="primary"
             onClick={() => mutation.mutate()}
             disabled={reason.trim().length < 5 || mutation.isPending}
           >
             {mutation.isPending ? "Menyimpan…" : "Simpan override"}
           </Button>
         </div>
-      </div>
-    </div>
+      </Dialog>
+    </Dialog.Root>
   );
 }

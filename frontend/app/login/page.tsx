@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@cloudflare/kumo/components/checkbox";
 import { fetchMe, login } from "@/lib/api";
 
 function GateLogo() {
@@ -54,8 +55,8 @@ export default function LoginPage() {
           {error && <div role="alert" className="auth-error">{error}</div>}
           <label className="auth-field"><span>Email</span><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="username" placeholder="name@company.com" required /></label>
           <label className="auth-field"><span>Password</span><div className="auth-password"><input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="Enter your password" required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}</button></div></label>
-          <label className="auth-remember"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>Remember this email on this device</span></label>
-          <Button type="submit" className="auth-submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</Button>
+          <Checkbox className="auth-remember" label="Remember this email on this device" checked={remember} onCheckedChange={(checked) => setRemember(Boolean(checked))} />
+          <Button type="submit" variant="primary" className="auth-submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</Button>
         </form>
         <p className="auth-support">Need access? <span>Contact your GateGuard administrator.</span></p>
         <p className="auth-legal">By continuing, you agree to GateGuard&apos;s terms and privacy policy.</p>

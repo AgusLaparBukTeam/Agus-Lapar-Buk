@@ -5,13 +5,13 @@ type KumoButtonProps = ComponentProps<typeof KumoButton>;
 type KumoLinkButtonProps = ComponentProps<typeof KumoLinkButton>;
 type Variant = "primary" | "secondary" | "danger" | "ghost" | "link";
 
-export function Button({ variant = "primary", ...props }: Omit<KumoButtonProps, "variant"> & { variant?: Variant }) {
+export function Button({ variant = "secondary", ...props }: Omit<KumoButtonProps, "variant"> & { variant?: Variant }) {
   const kumoVariant = variant === "danger" ? "destructive" : variant === "link" ? "ghost" : variant;
   const kumoProps = { ...props, variant: kumoVariant } as KumoButtonProps;
   return <KumoButton {...kumoProps} />;
 }
 
-export function ActionLink({ variant = "primary", ...props }: Omit<KumoLinkButtonProps, "variant"> & { variant?: Variant }) {
+export function ActionLink({ variant = "ghost", ...props }: Omit<KumoLinkButtonProps, "variant"> & { variant?: Variant }) {
   const kumoVariant = variant === "danger" ? "destructive" : variant === "link" ? "ghost" : variant;
   return <KumoLinkButton {...props} variant={kumoVariant} />;
 }

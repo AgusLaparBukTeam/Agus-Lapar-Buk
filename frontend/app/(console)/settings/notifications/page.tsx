@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@cloudflare/kumo/components/checkbox";
 import { PageHeader } from "@/components/ui/page-header";
 import { fetchWorkspaceSettings, saveWorkspaceSettings } from "@/lib/api";
 
@@ -11,5 +12,5 @@ export default function NotificationSettingsPage() {
   const [saved, setSaved] = useState(false);
   useEffect(() => { fetchWorkspaceSettings().then((data) => { const savedValues = (data.settings as Record<string, unknown> | undefined)?.notifications; if (savedValues && typeof savedValues === "object") setForm((current) => ({ ...current, ...(savedValues as Record<string, boolean>) })); }); }, []);
   async function save(event: React.FormEvent) { event.preventDefault(); await saveWorkspaceSettings({ notifications: form }); setSaved(true); window.setTimeout(() => setSaved(false), 2500); }
-  return <div className="operations-page"><PageHeader title="Notifications" description="Choose which operational events should reach your team." /><form className="data-panel settings-check-list settings-form" onSubmit={save}>{options.map(([key, label]) => <label key={key}><input type="checkbox" checked={Boolean(form[key])} onChange={(event) => setForm({ ...form, [key]: event.target.checked })} /> {label}</label>)}<p className="muted-copy">These preferences are stored with the workspace and can be refined per person later.</p><div className="form-panel__actions"><Button type="submit">Save notifications</Button>{saved && <span className="form-success" role="status">Notifications saved</span>}</div></form></div>;
+  return <div className="operations-page"><PageHeader title="Notifications" description="Choose which operational events should reach your team." /><form className="data-panel settings-check-list settings-form" onSubmit={save}>{options.map(([key, label]) => <Checkbox key={key} label={label} checked={Boolean(form[key])} onCheckedChange={(checked) => setForm({ ...form, [key]: Boolean(checked) })} />)}<p className="muted-copy">These preferences are stored with the workspace and can be refined per person later.</p><div className="form-panel__actions"><Button type="submit" variant="primary">Save notifications</Button>{saved && <span className="form-success" role="status">Notifications saved</span>}</div></form></div>;
 }
