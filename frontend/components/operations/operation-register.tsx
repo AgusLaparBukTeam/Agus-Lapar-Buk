@@ -99,13 +99,13 @@ const configs: Record<string, { title: string; description: string; path: string
   ] },
 };
 
-export function OperationRegister({ kind }: { kind: keyof typeof configs }) {
+export function OperationRegister({ kind, includeHeader = true }: { kind: keyof typeof configs; includeHeader?: boolean }) {
   const config = configs[kind];
   const [query, setQuery] = useState("");
   const result = useQuery({ queryKey: ["operations", kind, query], queryFn: () => fetchOperationsList(config.path, query ? { q: query } : undefined) });
   const rows = useMemo(() => result.data?.items || [], [result.data]);
   return <div className="operations-page">
-    <PageHeader title={config.title} description={config.description} actions={config.action ? <ActionLink href={config.action.href} icon={Plus}>{config.action.label}</ActionLink> : undefined} />
+    {includeHeader && <PageHeader title={config.title} description={config.description} actions={config.action ? <ActionLink href={config.action.href} icon={Plus}>{config.action.label}</ActionLink> : undefined} />}
     <div className="operations-toolbar"><label className="operations-search"><MagnifyingGlass size={16} /><span className="sr-only">Search {config.title}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${config.title.toLowerCase()}...`} /></label><span className="muted-label">{rows.length} records</span></div>
     {result.isError ? <div className="notice notice--danger"><WarningCircle size={18} /> This register is not available right now.</div> : <section className="data-panel data-panel--wide"><div className="table-scroll"><Table><Table.Header sticky><Table.Row>{config.columns.map((column) => <Table.Head key={column.label}>{column.label}</Table.Head>)}</Table.Row></Table.Header><Table.Body>{rows.map((row) => <Table.Row key={String(row.id)}>{config.columns.map((column) => <Table.Cell key={column.label}>{column.value(row)}</Table.Cell>)}</Table.Row>)}</Table.Body></Table></div>{!result.isPending && rows.length === 0 && <div className="empty-state"><strong>No {config.title.toLowerCase()} yet</strong><span>Records appear here when your team creates them in this workspace.</span></div>}</section>}
   </div>;

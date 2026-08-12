@@ -27,6 +27,10 @@ export function AppSelect({
   disabled = false,
   className,
 }: AppSelectProps) {
+  const emptyOption = options.find((option) => option.value === "");
+  const visibleOptions = options.filter((option) => option.value !== "");
+  const resolvedPlaceholder = placeholder || emptyOption?.label;
+
   return (
     <KumoSelect
       aria-label={ariaLabel}
@@ -35,10 +39,10 @@ export function AppSelect({
       onValueChange={(next) => {
         if (typeof next === "string") onValueChange(next);
       }}
-      placeholder={placeholder}
-      value={value}
+      placeholder={resolvedPlaceholder}
+      value={value || undefined}
     >
-      {options.map((option) => (
+      {visibleOptions.map((option) => (
         <KumoSelect.Option disabled={option.disabled} key={option.value} value={option.value}>
           {option.label}
         </KumoSelect.Option>
