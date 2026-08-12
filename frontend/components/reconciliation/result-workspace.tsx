@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { DocumentViewer } from "@/components/document-viewer/document-viewer";
 import { Button } from "@/components/ui/button";
+import { AppSelect } from "@/components/ui/select";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { overrideDecision } from "@/lib/api";
 import { fetchMe } from "@/lib/api";
@@ -220,11 +221,7 @@ function OverrideDialog({
         <p className="mt-4 rounded-md bg-blue-50 p-3 text-xs text-blue-900">Identitas pemberi override diambil dari akun supervisor yang sedang login dan dicatat otomatis.</p>
         <label className="mt-3 block text-xs font-medium">
           Keputusan akhir
-          <select value={decision} onChange={(e) => setDecision(e.target.value as ReconciliationStatus)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-white px-2">
-            <option value="CLEAR">CLEAR</option>
-            <option value="REVIEW">REVIEW</option>
-            <option value="HOLD">HOLD</option>
-          </select>
+          <AppSelect ariaLabel="Keputusan akhir" className="mt-1" value={decision} onValueChange={(value) => setDecision(value as ReconciliationStatus)} options={[{ value: "CLEAR", label: "CLEAR" }, { value: "REVIEW", label: "REVIEW" }, { value: "HOLD", label: "HOLD" }]} />
         </label>
         <label className="mt-3 block text-xs font-medium">
           Alasan override

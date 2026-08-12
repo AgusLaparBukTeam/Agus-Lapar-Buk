@@ -56,3 +56,45 @@ def test_operator_cannot_override():
         json={"final_decision": "CLEAR", "reason": "Operator cannot approve"},
     )
     assert response.status_code == 403
+
+
+def test_admin_cannot_create_another_administrator():
+    from conftest import login
+
+    client = login(TestClient(app))
+    response = client.post(
+        "/api/users",
+        json={
+            "email": "reserved-admin@example.com",
+            "display_name": "Reserved Admin",
+            "password": "a secure password",
+            "role": "admin",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "ADMIN_ROLE_RESERVED"
+
+
+def test_admin_cannot_promote_user_to_administrator():
+    from conftest import login
+
+    client = login(TestClient(app))
+    created = client.post(
+        "/api/users",
+        json={
+            "email": "promotable-operator@example.com",
+            "display_name": "Promotable Operator",
+            "password": "a secure password",
+            "role": "operator",
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.patch(
+        f"/api/users/{created.json()['id']}",
+        json={"role": "admin"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "ADMIN_ROLE_RESERVED"

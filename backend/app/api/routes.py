@@ -477,6 +477,12 @@ def create_user(
         )
     ),
 ):
+    if body.role.value == "admin":
+        raise GateGuardError(
+            "Administrator accounts are provisioned only during workspace setup.",
+            code="ADMIN_ROLE_RESERVED",
+            status_code=422,
+        )
     user = get_repository().create_user(
         email=body.email,
         display_name=body.display_name,
@@ -506,6 +512,12 @@ def update_user(
         )
     ),
 ):
+    if body.role and body.role.value == "admin":
+        raise GateGuardError(
+            "Administrator accounts are provisioned only during workspace setup.",
+            code="ADMIN_ROLE_RESERVED",
+            status_code=422,
+        )
     user = get_repository().update_user(
         user_id,
         role=body.role.value if body.role else None,
