@@ -1,49 +1,58 @@
 # Contributing
 
-Keep changes small enough to review and verify. Behavior that can change a shipment decision must include a regression test.
+Terima kasih telah berkontribusi pada GateGuard. Perubahan harus cukup kecil untuk direview, diuji, dan—untuk alur yang dapat memengaruhi keputusan shipment—ditelusuri kembali melalui test regresi atau evidence yang relevan.
+
+## Prinsip Kontribusi
+
+Gunakan perubahan yang terfokus. Hindari mencampur refactor, perubahan dependency, dan perubahan perilaku yang tidak berkaitan dalam satu pull request. Setiap perubahan yang dapat memengaruhi keputusan `CLEAR`, `REVIEW`, `HOLD`, extraction confidence, atau audit trail wajib menjelaskan dampaknya dan menyertakan verifikasi yang sesuai.
 
 ## Setup
 
-Backend:
+Siapkan dependency backend dan frontend dari lockfile yang tersedia.
 
 ```bash
 cd backend
 uv sync --locked --extra dev
-```
 
-Frontend:
-
-```bash
-cd frontend
+cd ../frontend
 npm ci --include=dev
 ```
 
-## Before opening a pull request
+## Validasi Sebelum Pull Request
 
-Run the relevant checks:
+Jalankan pemeriksaan yang relevan sebelum membuka pull request:
 
 ```bash
 make test
 ```
 
-For reconciliation changes, also run:
+Untuk perubahan pada rekonsiliasi dokumen, jalankan evaluasi tambahan berikut:
 
 ```bash
 cd backend
 uv run python ../evaluation/run.py
 ```
 
-## Pull requests
+Tambahkan `npm run lint` dan `npm run build` dari direktori `frontend` apabila perubahan menyentuh antarmuka atau route Next.js. Jangan menganggap build yang berhasil sebagai pengganti test perilaku aplikasi.
 
-A useful PR description explains:
+## Pull Request
 
-- what behavior changed;
-- why the change is needed;
-- how it was verified;
-- whether it changes `CLEAR`, `REVIEW`, `HOLD`, extraction confidence, or audit behavior.
+Deskripsi pull request yang baik menjelaskan alasan perubahan dan cara hasilnya diverifikasi. Sertakan informasi berikut dalam bentuk yang singkat dan spesifik:
 
-Avoid unrelated formatting or dependency changes in the same PR.
+1. Perilaku yang berubah.
+2. Alasan perubahan diperlukan.
+3. Cara verifikasi yang telah dijalankan, termasuk command atau test penting.
+4. Dampak terhadap `CLEAR`, `REVIEW`, `HOLD`, extraction confidence, audit behavior, atau API contract bila ada.
+5. Kebutuhan migrasi, environment variable, atau langkah deployment bila ada.
 
-## Reconciliation rules
+Gunakan judul yang mendeskripsikan hasil, bukan aktivitas umum. Contohnya, gunakan `fix: retain evidence provenance for numeric mismatches`, bukan `fix bugs`.
 
-Do not relax a fail-closed rule only to make a fixture pass. If a new document variation should be accepted, add a representative fixture and define why it is safe to distinguish from a material mismatch.
+## Aturan Rekonsiliasi
+
+Jangan melonggarkan aturan fail-closed hanya agar fixture atau test lolos. Jika variasi dokumen baru seharusnya diterima, tambahkan fixture yang representatif dan jelaskan alasan aman untuk membedakannya dari mismatch yang material.
+
+Evidence dari OCR, model bahasa, atau provider eksternal harus diperlakukan sebagai data tidak tepercaya. Keputusan release tetap berada pada aturan rekonsiliasi deterministik dan batas authorization backend.
+
+## Kualitas Dokumentasi
+
+Nama file dokumentasi menggunakan Bahasa Inggris agar struktur repository konsisten. Isi dokumentasi ditulis dalam Bahasa Indonesia yang jelas, kecuali command, path, kode, nama produk, API, label status, atau istilah teknis yang lebih tepat dipertahankan dalam English.

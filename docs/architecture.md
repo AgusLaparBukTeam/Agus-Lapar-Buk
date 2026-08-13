@@ -1,74 +1,74 @@
 # Architecture
 
-GateGuard is a pre-dispatch consistency check for three shipment documents: Delivery Order, Invoice, and Packing List.
+GateGuard adalah pemeriksaan konsistensi pra-pengiriman untuk tiga dokumen shipment: Delivery Order, Invoice, dan Packing List.
 
-## Design constraint
+## Batasan Desain
 
-Extraction is probabilistic; dispatch control should not be.
+Ekstraksi bersifat probabilistik; kontrol dispatch tidak boleh demikian.
 
-The extraction layer converts documents into structured evidence. The reconciliation layer owns the operational decision. No OCR engine or language model is allowed to set `CLEAR`, `REVIEW`, or `HOLD` directly.
+Layer ekstraksi mengubah dokumen menjadi evidence terstruktur. Layer rekonsiliasi memiliki keputusan operasional. Tidak ada OCR engine atau language model yang diizinkan menetapkan `CLEAR`, `REVIEW`, atau `HOLD` secara langsung.
 
-## Request flow
+## Alur Request
 
-1. The browser sends the three required files to the Next.js BFF.
-2. The BFF forwards the request to FastAPI with a server-side service credential.
-3. FastAPI validates file type, signature, size, image dimensions, and PDF limits.
-4. The extraction router reads the document using the configured provider.
-5. Extracted values are normalized into the canonical shipment schema.
-6. Deterministic reconciliation rules compare critical fields and line items.
-7. The result, evidence, and system decision are persisted.
-8. A supervisor may record an override. The original system decision remains immutable.
+1. Browser mengirim tiga file yang diperlukan ke Next.js BFF.
+2. BFF meneruskan request ke FastAPI dengan service credential yang hanya berada di server.
+3. FastAPI memvalidasi tipe file, signature, ukuran, dimensi gambar, dan batas PDF.
+4. Extraction router membaca dokumen menggunakan provider yang dikonfigurasi.
+5. Nilai hasil ekstraksi dinormalisasi ke canonical shipment schema.
+6. Aturan rekonsiliasi deterministik membandingkan field penting dan line item.
+7. Hasil, evidence, serta keputusan sistem disimpan.
+8. Supervisor dapat merekam override. Keputusan awal sistem tetap immutable.
 
-## Trust boundaries
+## Trust Boundary
 
-### Browser to BFF
+### Browser ke BFF
 
-The browser is untrusted. It never receives backend service credentials or provider API keys.
+Browser tidak tepercaya. Browser tidak pernah menerima backend service credential atau provider API key.
 
-### BFF to API
+### BFF ke API
 
-The BFF is the intended application client for the backend. It forwards the HttpOnly session cookie while keeping the service API key server-side. The service API key protects the backend from direct unauthenticated calls; it is not a substitute for user authentication or RBAC.
+BFF adalah application client resmi untuk backend. BFF meneruskan session cookie HttpOnly sambil menjaga service API key tetap di server. Service API key melindungi backend dari panggilan langsung tanpa autentikasi; credential ini bukan pengganti user authentication atau RBAC.
 
-### Documents to extraction
+### Dokumen ke Ekstraksi
 
-Uploaded documents are untrusted input. They are treated as data, not instructions. File validation and resource limits run before extraction.
+Dokumen yang diunggah adalah input tidak tepercaya. Dokumen diperlakukan sebagai data, bukan instruksi. Validasi file dan resource limit dijalankan sebelum ekstraksi.
 
-### Extraction to reconciliation
+### Ekstraksi ke Rekonsiliasi
 
-Provider output is untrusted evidence. Critical values include provenance and confidence. Model-only evidence is confidence-gated and cannot independently authorize `CLEAR`.
+Output provider adalah evidence tidak tepercaya. Nilai penting mencakup provenance dan confidence. Evidence yang hanya berasal dari model dibatasi oleh confidence dan tidak dapat mengotorisasi `CLEAR` secara mandiri.
 
-### Override path
+### Jalur Override
 
-Supervisor override requires a supervisor/admin session and records the authenticated user id, display-name snapshot, reason, prior state, final state, and timestamp. The request cannot supply an arbitrary actor or shared supervisor credential.
+Supervisor override memerlukan session supervisor atau admin dan merekam user ID terautentikasi, snapshot display name, alasan, status sebelumnya, status akhir, serta timestamp. Request tidak dapat memasok actor arbitrer atau shared supervisor credential.
 
-## Decision semantics
+## Semantik Keputusan
 
 ### `CLEAR`
 
-Used only when the required deterministic evidence is complete and equivalent under conservative normalization.
+Digunakan hanya ketika evidence deterministik yang diperlukan lengkap dan setara menurut normalisasi konservatif.
 
 ### `REVIEW`
 
-Used when the system cannot safely distinguish an acceptable variation from a material conflict, including low-confidence extraction and near-text matches.
+Digunakan ketika sistem tidak dapat membedakan secara aman variasi yang dapat diterima dari konflik material, termasuk extraction confidence rendah dan near-text match.
 
 ### `HOLD`
 
-Used for material deterministic conflicts such as quantity, SKU, document identity, or other critical cross-document mismatches.
+Digunakan untuk konflik deterministik yang material, seperti quantity, SKU, identitas dokumen, atau mismatch kritis lintas dokumen lainnya.
 
-## Persistence
+## Persistensi
 
-SQLite is supported for local development. Production configuration requires PostgreSQL and schema migration through Alembic.
+SQLite didukung untuk local development. Konfigurasi production memerlukan PostgreSQL dan schema migration melalui Alembic.
 
-Raw uploaded files are processed in scoped temporary storage and are not persisted by default. Persisted records contain structured results and audit state.
+File upload mentah diproses pada temporary storage yang dibatasi scope dan tidak dipersist secara default. Record yang dipersist berisi hasil terstruktur dan audit state.
 
-## Non-goals
+## Non-Goals
 
-GateGuard does not:
+GateGuard tidak dimaksudkan untuk:
 
-- verify physical package contents;
-- replace a WMS, ERP, or TMS;
-- authorize payment;
-- establish tax or accounting correctness;
-- prove that three mutually consistent documents reference the correct order.
+- memverifikasi isi fisik paket;
+- menggantikan WMS, ERP, atau TMS;
+- mengotorisasi pembayaran;
+- menetapkan kebenaran pajak atau akuntansi;
+- membuktikan bahwa tiga dokumen yang konsisten mengacu pada order yang benar.
 
-For dispatch authorization, add a trusted WMS/ERP shipment reference and explicit unit-of-measure rules.
+Untuk authorization dispatch, tambahkan referensi shipment dari WMS/ERP tepercaya dan aturan unit-of-measure yang eksplisit.
