@@ -1,12 +1,24 @@
 # GateGuard
 
-GateGuard is an organization-scoped shipment assurance workspace. It brings shipment cases, evidence, checks, exceptions, approvals, and dispatch decisions into one operational record. Extraction may be probabilistic; release decisions remain deterministic, reviewable, and fail closed.
+GateGuard adalah workspace assurance pengiriman untuk memeriksa konsistensi dokumen sebelum barang dilepas. Aplikasi menyatukan case pengiriman, dokumen sumber, pemeriksaan, exception, approval, dan keputusan release ke dalam satu rekam operasional yang dapat ditelusuri.
 
-## Architecture
+> **Prinsip utama:** ekstraksi dokumen dapat bersifat probabilistik, sedangkan keputusan `CLEAR`, `REVIEW`, dan `HOLD` harus deterministik, dapat diaudit, dan fail-closed.
+
+## Ringkasan
+
+| Area | Peran |
+|---|---|
+| Operations console | Antarmuka Next.js untuk mengelola case, dokumen, pemeriksaan, exception, release, dan pengaturan workspace. |
+| Backend API | Modular monolith FastAPI yang menangani autentikasi, RBAC, audit, lifecycle shipment, rekonsiliasi, serta integrasi. |
+| Evidence pipeline | Mengubah dokumen menjadi evidence terstruktur dengan provenance dan confidence. |
+| Decision engine | Membandingkan field penting secara deterministik dan menghasilkan keputusan operasional. |
+| Data layer | PostgreSQL untuk production dan SQLite untuk pengembangan atau test lokal. |
+
+## Arsitektur
 
 ```text
 Browser
-  -> Next.js operations console + BFF (HttpOnly session cookie, server API key)
+  -> Next.js operations console + BFF
   -> FastAPI modular monolith
        organizations / facilities / memberships
        auth / sessions / RBAC / audit / four-eyes approval
@@ -14,75 +26,76 @@ Browser
        assurance checks / exceptions / rule packs / screening records
        integrations / service tokens / webhooks / processing jobs
        analytics / observability / deterministic domain rules
-  -> PostgreSQL in production, SQLite for local development/tests
+  -> PostgreSQL pada production, SQLite untuk local development dan test
 ```
 
-The browser never receives backend service keys, provider credentials, database credentials, or session tokens through JavaScript. The BFF forwards the browser cookie and keeps service credentials server-side.
+Browser tidak menerima service key backend, kredensial provider, password database, atau session token melalui JavaScript. BFF meneruskan cookie sesi HttpOnly dan menyimpan credential antar-layanan di sisi server.
 
-## Operations workspace
+Dokumentasi desain dan operasi yang lebih rinci tersedia pada [Documentation index](docs/index.md).
 
-- `/login` — database-backed sign-in with temporary-password enforcement.
-- `/dashboard` — active shipments, exceptions, overdue work, release readiness, and recents.
-- `/shipments` — shipment register and a tabbed operational record.
-- `/documents`, `/parties`, `/products`, `/transport` — evidence and movement registers.
-- `/requirements`, `/assurance`, `/exceptions`, `/screening`, `/dangerous-goods` — assurance workflows with honest empty states.
-- `/work-queue`, `/releases`, `/analytics`, `/observability`, `/audit` — decisions, workload, trends, and traceability.
-- `/integrations/*`, `/governance/*`, and `/settings/*` — controlled connections, rule packs, reference data, people, policy, security, and retention.
+## Ruang Kerja Operasional
 
-Roles are `operator`, `supervisor`, and `admin`. Backend dependencies enforce the permissions; hiding a frontend control is not the security boundary.
+| Route | Kegunaan |
+|---|---|
+| `/dashboard` | Ringkasan shipment aktif, exception, pekerjaan terlambat, kesiapan release, dan record terakhir. |
+| `/shipments` | Register shipment serta rekam operasional bertab. |
+| `/documents`, `/parties`, `/products`, `/transport` | Register evidence, pihak terkait, produk, dan pergerakan. |
+| `/requirements`, `/assurance`, `/exceptions`, `/screening`, `/dangerous-goods` | Alur assurance dan pemeriksaan kepatuhan. |
+| `/work-queue`, `/releases`, `/analytics`, `/observability`, `/audit` | Pengambilan keputusan, beban kerja, tren, observability, serta traceability. |
+| `/integrations/*`, `/governance/*`, `/settings/*` | Konfigurasi koneksi, rule pack, reference data, user, policy, keamanan, dan retensi. |
 
-## Local setup
+Role aplikasi adalah `operator`, `supervisor`, dan `admin`. Backend melakukan enforcement atas permission; menyembunyikan kontrol pada frontend bukanlah batas keamanan.
+
+## Menjalankan Secara Lokal
+
+Prasyarat utama adalah Python, Node.js, package manager yang sesuai dengan lockfile, serta Docker apabila menggunakan Compose. Salin environment example dan jalankan service:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-Or run services directly:
+Untuk menjalankan service secara terpisah:
 
 ```bash
 cd backend
-python -m venv .venv
-.venv\\Scripts\\activate
-python -m pip install -e ".[dev]"
-alembic upgrade head
-python scripts/create_admin.py
-uvicorn app.main:app --reload --port 8000
+uv sync --locked --extra dev
+uv run alembic upgrade head
+uv run python scripts/create_admin.py
+uv run uvicorn app.main:app --reload --port 8000
 
 cd ../frontend
 npm ci --include=dev
 npm run dev
 ```
 
-The first admin is created interactively. Passwords are never committed or logged. In production, run migrations before starting the application.
+Admin pertama dibuat secara interaktif. Password tidak boleh di-commit, ditulis ke log, atau disimpan pada variabel `NEXT_PUBLIC_*`.
 
-## Database and security
+## Validasi
 
-Migrations `0004_assurance_control_plane` and `0005_assurance_integrity` add organization, facility, membership, shipment lifecycle, document, assurance, exception, integration, job, notification, worker heartbeat, and audit boundaries. Passwords use Argon2id; only SHA-256 hashes of random session tokens are stored. Cookies are HttpOnly, SameSite=Lax, and Secure in production. Deactivation revokes active sessions, and the final active admin cannot be demoted or deactivated.
+Jalankan pemeriksaan relevan sebelum membuka pull request:
 
-Production requires PostgreSQL, a 32+ character `APP_API_KEY`, explicit non-wildcard `CORS_ORIGINS`, and secure cookies. Never put `OPENAI_API_KEY`, `APP_API_KEY`, database passwords, or other secrets in `NEXT_PUBLIC_*` variables.
+```bash
+make test
 
-## Extraction and screening
+cd frontend
+npm run lint
+npm run build
+```
 
-`EXTRACTION_PROVIDER` accepts `local`, `openai`, `paddle`, or `auto`. Local PDF extraction is the safe development path. Provider configuration is shown as an honest state in observability; secret values are never returned. Unconfigured screening is reported as unconfigured rather than as a successful screen.
-
-## Tests and validation
+Untuk perubahan pada rekonsiliasi, jalankan evaluasi tambahan:
 
 ```bash
 cd backend
-python -m pytest
-python -m ruff check app scripts tests
-alembic upgrade head
-
-cd ../frontend
-npm test
-npm run lint
-npm run build
-npm audit --omit=dev
+uv run python ../evaluation/run.py
 ```
 
-Compose validation requires Docker to be installed.
+## Keamanan dan Data
 
-## Scope limitation
+Production memerlukan PostgreSQL, `APP_API_KEY` dengan panjang minimal 32 karakter, `CORS_ORIGINS` eksplisit tanpa wildcard, serta cookie aman. `APP_API_KEY` hanya dipakai BFF sebagai credential server-to-server. Jika ekstraksi OpenAI diaktifkan, `OPENAI_API_KEY` juga harus tetap berada di sisi server.
 
-The document vault stores uploaded PDF/JPEG/PNG bytes in a bounded, organization-scoped filesystem volume, records SHA-256 hashes and immutable versions, and marks extraction as `NEEDS_REVIEW` when no provider is configured. S3-compatible object storage and external screening-provider adapters remain deployment configuration. GateGuard verifies cross-document consistency and workflow evidence; it does not prove physical contents or replace an authoritative WMS/ERP shipment reference.
+Document vault menyimpan byte PDF/JPEG/PNG di storage yang dibatasi scope organisasi, merekam hash SHA-256 dan versi yang immutable, serta dapat menandai hasil sebagai `NEEDS_REVIEW` ketika provider tidak dikonfigurasi. GateGuard memeriksa konsistensi lintas dokumen dan evidence alur kerja; aplikasi ini tidak membuktikan isi fisik barang atau menggantikan referensi WMS/ERP yang otoritatif.
+
+## Kontribusi dan Dukungan
+
+Baca [Contributing guide](CONTRIBUTING.md) sebelum mengajukan perubahan dan [Security policy](SECURITY.md) sebelum melaporkan isu keamanan. Panduan deployment tersedia di [Deployment guide](docs/deployment.md).

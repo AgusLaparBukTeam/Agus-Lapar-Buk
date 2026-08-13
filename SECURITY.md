@@ -1,24 +1,31 @@
 # Security Policy
 
-GateGuard processes untrusted shipment documents and may handle commercially sensitive data.
+GateGuard memproses dokumen pengiriman yang tidak tepercaya dan dapat menangani data komersial yang sensitif. Keamanan aplikasi bergantung pada kode, konfigurasi environment, identity provider, jaringan, dan disiplin operasional yang digunakan saat deployment.
 
-## Reporting a vulnerability
+## Melaporkan Kerentanan
 
-Do not include secrets, customer documents, or exploitable details in a public issue. Prefer GitHub's private vulnerability reporting for this repository when available. Otherwise, contact the repository maintainer privately before publishing details.
+Jangan memasukkan secret, dokumen pelanggan, data pribadi, atau detail eksploitasi yang dapat digunakan langsung ke dalam issue publik. Gunakan private vulnerability reporting GitHub untuk repository ini apabila tersedia. Jika tidak tersedia, hubungi maintainer secara privat sebelum memublikasikan detail kerentanan.
 
-Include the affected component, reproduction steps, expected impact, and any suggested mitigation.
+Sertakan komponen yang terdampak, langkah reproduksi minimum, dampak yang diharapkan, versi atau commit terkait, dan mitigasi yang disarankan apabila sudah diketahui.
 
-## Security-sensitive areas
+## Area Sensitif
 
-Changes to the following paths deserve additional review:
+Perubahan pada area berikut memerlukan review tambahan dan test yang sesuai:
 
-- upload and file validation;
-- extraction provider adapters;
-- reconciliation rules;
-- supervisor override authorization and audit history;
-- backend proxy/authentication code;
-- production configuration and migrations.
+- upload serta validasi file;
+- extraction provider adapter;
+- aturan rekonsiliasi;
+- authorization dan audit history untuk supervisor override;
+- backend proxy, session, dan authentication;
+- migration database serta konfigurasi production;
+- secret, identity, ingress, dan deployment automation.
 
-## Deployment boundary
+## Batas Keamanan Aplikasi
 
-The included application-level controls do not replace identity, TLS, ingress filtering, network isolation, or database security. See `docs/deployment.md` before using real shipment data.
+Kontrol pada aplikasi tidak menggantikan identity enforcement, TLS, WAF atau ingress filtering, network isolation, backup, database hardening, dan secret management pada environment deployment. FastAPI tidak boleh diekspos langsung ke Internet; browser hanya berkomunikasi melalui Next.js BFF yang terautentikasi.
+
+Credential provider, database, dan service-to-service harus berada di sisi server. Jangan mengirimkan `APP_API_KEY`, `OPENAI_API_KEY`, password, client secret, atau credential lain melalui `NEXT_PUBLIC_*`, source code, fixture, screenshot, issue, maupun log.
+
+## Tindakan Setelah Perbaikan
+
+Setelah kerentanan diperbaiki, maintainer perlu menilai perubahan konfigurasi yang menyertainya, menjalankan regresi keamanan yang relevan, dan merotasi credential apabila ada kemungkinan secret telah terekspos. Lihat [Deployment guide](docs/deployment.md) sebelum menggunakan data pengiriman nyata.
