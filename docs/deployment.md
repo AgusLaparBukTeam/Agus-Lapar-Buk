@@ -72,7 +72,18 @@ Secret production berada pada `/opt/gateguard/.env` dengan permission ketat dan 
 
 ### Automatic Deployment
 
-VM menjalankan `gateguard-deploy.timer` setiap lima menit. Timer memeriksa `origin/main` secara ringan dan hanya menjalankan build ulang ketika SHA branch `main` berubah dari commit deployment sehat terakhir. Service memakai lock untuk mencegah deployment tumpang tindih, menunggu health PostgreSQL serta backend, dan menguji `/login` melalui Caddy sebelum menyimpan SHA baru sebagai sukses.
+Setiap merge ke `main` menjalankan workflow CI. Setelah job `Verify` sukses, job `Publish production images` membangun image `linux/arm64` di runner GitHub dan menerbitkan tag immutable SHA ke GitHub Container Registry (GHCR). VM tetap menjalankan `gateguard-deploy.timer` setiap lima menit, tetapi tugasnya hanya menarik tag SHA yang telah dipublikasikan lalu melakukan restart Compose dengan `--no-build`. Dengan demikian, compile Next.js dan type-check tidak lagi membebani VM 1 GiB.
+
+Package `gateguard-backend` dan `gateguard-frontend` harus diatur **Public** pada GitHub Packages setelah publikasi pertama. Repository sumber sudah public; package public dapat ditarik anonim oleh VM sehingga tidak ada PAT, password registry, atau secret aplikasi tambahan yang disimpan di GitHub. Tag `latest` hanya untuk inspeksi; VM selalu memakai tag SHA immutable yang sama dengan commit `main`.
+
+Aktivasi awal setelah pull request pipeline di-merge dilakukan dari VM oleh administrator:
+
+```bash
+sudo install -m 0755 /opt/gateguard/infra/gateguard-deploy-if-new.sh /usr/local/sbin/gateguard-deploy-if-new
+sudo systemctl start gateguard-deploy.service
+```
+
+Jika image untuk SHA belum tersedia, pull akan gagal tanpa menghentikan container lama. Timer akan mencoba kembali pada interval berikutnya. Fallback build lokal hanya boleh dipakai saat recovery eksplisit dengan `sudo GATEGUARD_DEPLOY_MODE=build /usr/local/sbin/gateguard-deploy-if-new`; mode normal adalah `images`.
 
 ```bash
 sudo systemctl status gateguard-deploy.timer
@@ -80,7 +91,7 @@ sudo journalctl -u gateguard-deploy.service -n 100 --no-pager
 cat /var/lib/gateguard/last-successful-sha
 ```
 
-Jalur ini tidak bergantung pada repository secret atau hak admin GitHub. Konsekuensinya, deployment dapat tertunda sampai lima menit dan tidak menunggu GitHub Actions selesai. Bila owner repository kemudian memberi akses ke Actions secrets atau webhook, deployment sebaiknya dipindahkan ke trigger event yang dapat menjadi gerbang setelah CI lulus.
+Service memakai lock untuk mencegah deployment tumpang tindih, menunggu health PostgreSQL serta backend, dan menguji `/login` sebelum menyimpan SHA baru sebagai sukses. Jalur ini tidak membutuhkan secret aplikasi di GitHub dan tidak menambah resource Azure.
 
 ## Dependency Locking
 
