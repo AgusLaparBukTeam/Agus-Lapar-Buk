@@ -60,11 +60,27 @@ docker compose -f docker-compose.prod.yml up --build
 
 Container berjalan sebagai non-root user dengan Linux capability yang dibatasi. Byte dokumen upload disimpan pada named volume `gateguard-documents` yang dipakai bersama oleh backend dan worker. Backup serta retensi volume ini harus dikelola bersama PostgreSQL, atau storage boundary perlu diganti dengan object-storage adapter yang disetujui sebelum melakukan scale-out.
 
-## Azure Readiness
+## Azure Production VM
 
-Azure belum dikonfigurasi sebagai target deployment pada repository ini. Sebelum melakukan deployment di Azure, tetapkan subscription, region, ownership, environment separation, budget alert, managed identity atau Service Principal dengan least privilege, serta strategi backup dan recovery.
+GateGuard saat ini dijalankan pada satu Azure VM `Standard_B2ats_v2` berbasis ARM di Indonesia Central. Konfigurasi ini menggunakan satu OS disk Standard LRS 32 GiB, satu static public IPv4, VNet/subnet/NSG minimum, dan swap 2 GiB. PostgreSQL, FastAPI, worker, serta Next.js tetap berada dalam satu `docker-compose.prod.yml`; tidak ada managed database, load balancer, NAT gateway, Log Analytics, atau service pendukung berbayar lain pada topology ini.
 
-Simpan secret production pada secret manager yang dikelola platform; jangan memasukkannya ke GitHub Actions log, Docker image, repository, atau `NEXT_PUBLIC_*`. Perubahan resource, networking, atau cost-bearing service harus melalui review dan persetujuan terpisah. Pilihan compute, database, storage, ingress, dan observability perlu didokumentasikan dalam runbook target environment sebelum production traffic diarahkan ke Azure.
+Konfigurasi tersebut dipilih agar biaya tetap berada di bawah batas operasional $20 per bulan. Budget atau alert biaya harus dipantau melalui Azure Cost Management, tetapi alert hanya memberi notifikasi dan tidak menghentikan penggunaan secara otomatis. Jangan menambah disk, public IP, backup vault, managed database, atau service observability tanpa menilai kembali dampak biayanya.
+
+VM hanya mengekspos port `80` untuk Caddy dan port `22` untuk deployment administratif berbasis SSH key. FastAPI dan PostgreSQL tidak diekspos langsung. Caddy meneruskan traffic ke frontend pada loopback. Saat ini ingress memakai HTTP karena belum ada domain yang dapat dipakai untuk sertifikat TLS. Sebelum menerima data produksi atau login dari jaringan yang tidak tepercaya, pasang domain dan TLS, lalu ubah `APP_PUBLIC_ORIGIN` ke origin HTTPS yang benar.
+
+Secret production berada pada `/opt/gateguard/.env` dengan permission ketat dan tidak boleh dimasukkan ke Git, Docker image, log CI, atau `NEXT_PUBLIC_*`. Service Principal Azure untuk otomasi tidak digunakan sebagai credential aplikasi.
+
+### Automatic Deployment
+
+VM menjalankan `gateguard-deploy.timer` setiap lima menit. Timer memeriksa `origin/main` secara ringan dan hanya menjalankan build ulang ketika SHA branch `main` berubah dari commit deployment sehat terakhir. Service memakai lock untuk mencegah deployment tumpang tindih, menunggu health PostgreSQL serta backend, dan menguji `/login` melalui Caddy sebelum menyimpan SHA baru sebagai sukses.
+
+```bash
+sudo systemctl status gateguard-deploy.timer
+sudo journalctl -u gateguard-deploy.service -n 100 --no-pager
+cat /var/lib/gateguard/last-successful-sha
+```
+
+Jalur ini tidak bergantung pada repository secret atau hak admin GitHub. Konsekuensinya, deployment dapat tertunda sampai lima menit dan tidak menunggu GitHub Actions selesai. Bila owner repository kemudian memberi akses ke Actions secrets atau webhook, deployment sebaiknya dipindahkan ke trigger event yang dapat menjadi gerbang setelah CI lulus.
 
 ## Dependency Locking
 
