@@ -1,3 +1,4 @@
+@source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
 @import "@cloudflare/kumo/styles/tailwind";
 @import "tailwindcss";
 
@@ -47,6 +48,11 @@ button, [role="button"], input, textarea, summary { outline: none; }
 *::-webkit-scrollbar-thumb:hover { background: var(--color-kumo-neutral-750); background-clip: padding-box; }
 
 /* Application shell */
+.shell-loading { display: flex; min-height: 100svh; align-items: center; justify-content: center; gap: 12px; background: var(--app-canvas); color: var(--app-text); padding: 24px; }
+.shell-loading__mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 6px; background: #f6821f; color: white; }
+.shell-loading strong { display: block; font-size: 14px; font-weight: 600; }
+.shell-loading p { margin: 3px 0 0; color: var(--app-muted); font-size: 14px; }
+.shell-loading--error .shell-loading__mark { background: var(--color-kumo-danger); }
 .console-shell { min-height: 100vh; background: var(--app-canvas); color: var(--app-text); }
 .console-sidebar {
   position: fixed;
@@ -221,7 +227,7 @@ button, [role="button"], input, textarea, summary { outline: none; }
 .operations-search { min-width: min(420px, 100%); height: 36px; }
 .filter-search input, .operations-search input { width: 100%; border: 0; background: transparent; color: var(--app-text); }
 
-.metric-grid, .health-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.metric-grid, .health-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--app-line); border-radius: var(--app-radius); background: var(--app-surface); }
 .metric-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .metric-grid--four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metric-cell, .health-cell { min-height: 94px; border-right: 1px solid var(--app-hairline); padding: 13px 15px; }
@@ -333,15 +339,22 @@ input[type="checkbox"] { accent-color: var(--color-kumo-brand); }
 .auth-form { display: grid; gap: 14px; }
 .auth-field { display: grid; gap: 6px; font-size: 14px; font-weight: 500; }
 .auth-field input { height: 38px; border: 1px solid var(--app-line); border-radius: 6px; padding: 0 10px; }
+.auth-password { position: relative; }
+.auth-password input { width: 100%; padding-right: 42px; }
+.auth-password button { position: absolute; top: 50%; right: 6px; display: inline-grid; width: 30px; height: 30px; place-items: center; transform: translateY(-50%); border: 0; border-radius: 4px; background: transparent; color: var(--app-muted); cursor: pointer; }
+.auth-password button:hover { background: var(--color-kumo-tint); color: var(--app-text); }
+.gate-logo__word { letter-spacing: -.01em; }
+.auth-promo__top { position: absolute; top: 32px; left: clamp(32px, 6vw, 88px); }
+.auth-promo__brand { color: var(--app-muted); font-size: 14px; font-weight: 500; }
 .auth-divider, .auth-kicker, .auth-promo__eyebrow, .auth-promo__meta, .auth-promo__status, .auth-promo__pages { display: none; }
 .auth-remember { display: flex; align-items: center; gap: 8px; color: var(--app-muted); }
 .auth-submit { width: 100%; }
 .auth-error { border: 1px solid var(--color-kumo-danger); border-radius: 6px; background: var(--color-kumo-danger-tint); padding: 10px; color: var(--color-kumo-danger); }
 .auth-support, .auth-legal { color: var(--app-muted); font-size: 12px; text-align: center; }
-.auth-promo { display: flex; min-height: 100svh; flex-direction: column; justify-content: flex-end; background: #f6821f; padding: 48px clamp(32px, 6vw, 88px); color: white; }
-.auth-promo__copy { max-width: 420px; }
-.auth-promo__copy h2 { margin: 0 0 10px; font-size: clamp(32px, 4vw, 48px); font-weight: 600; line-height: 1.1; }
-.auth-promo__copy p { max-width: 350px; color: rgb(255 255 255 / 86%); }
+.auth-promo { position: relative; display: flex; min-height: 100svh; flex-direction: column; justify-content: flex-end; border-left: 1px solid var(--app-hairline); background: var(--app-canvas); padding: 48px clamp(32px, 6vw, 88px); color: var(--app-text); }
+.auth-promo__copy { max-width: 480px; border: 1px solid var(--app-line); border-radius: var(--app-radius); background: var(--app-surface); padding: clamp(24px, 3vw, 40px); }
+.auth-promo__copy h2 { margin: 0 0 10px; font-size: clamp(30px, 3.4vw, 44px); font-weight: 600; line-height: 1.1; letter-spacing: -.025em; }
+.auth-promo__copy p { max-width: 390px; color: var(--app-muted); }
 .pixel-globe { display: none; }
 
 @media (max-width: 1199px) {
@@ -405,6 +418,23 @@ input[type="checkbox"] { accent-color: var(--color-kumo-brand); }
 .document-check-intro p { max-width: 720px; margin: 4px 0 0; color: var(--app-muted); font-size: 14px; }
 
 .data-panel .kumo-table strong, .data-panel table strong, .data-panel > strong { font-weight: 500; }
+
+/* Dashboard list and definition primitives share the Cloudflare border-led density. */
+.activity-list { display: grid; }
+.activity-row { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--app-hairline); padding: 11px 16px; color: inherit; text-decoration: none; }
+.activity-row:last-child { border-bottom: 0; }
+.activity-row:hover { background: var(--color-kumo-tint); }
+.activity-row > div { display: grid; min-width: 0; gap: 3px; }
+.activity-row strong { overflow: hidden; color: var(--app-text); font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.activity-row small { overflow: hidden; color: var(--app-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.activity-row > svg { flex: 0 0 auto; color: var(--app-muted); }
+.quality-value { display: grid; gap: 2px; border-bottom: 1px solid var(--app-hairline); padding: 18px 16px; }
+.quality-value strong { color: var(--app-text); font-size: 28px; font-weight: 600; line-height: 1; }
+.quality-value span { color: var(--app-muted); font-size: 14px; }
+.definition-list { display: grid; margin: 0; }
+.definition-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--app-hairline); padding: 10px 16px; }
+.definition-list dt { color: var(--app-muted); font-size: 14px; }
+.definition-list dd { margin: 0; color: var(--app-text); font-size: 14px; font-weight: 500; }
 
 .override-dialog { display: grid; gap: 14px; }
 .override-dialog [data-slot="dialog-title"] { color: var(--app-text); font-size: 16px; font-weight: 600; }

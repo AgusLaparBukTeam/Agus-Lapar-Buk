@@ -1,15 +1,16 @@
 "use client";
 
-import { EyeIcon as Eye, EyeSlashIcon as EyeSlash } from "@phosphor-icons/react";
+import { EyeIcon as Eye, EyeSlashIcon as EyeSlash, ShieldCheckIcon as ShieldCheck } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@cloudflare/kumo/components/checkbox";
+import { Input } from "@cloudflare/kumo/components/input";
 import { fetchMe, login } from "@/lib/api";
 
 function GateLogo() {
-  return <div className="gate-logo" aria-label="GateGuard"><span className="gate-logo__word">GateGuard</span></div>;
+  return <div className="gate-logo" aria-label="GateGuard"><span className="gate-logo__mark"><ShieldCheck size={16} weight="bold" /></span><span className="gate-logo__word">GateGuard</span></div>;
 }
 
 export default function LoginPage() {
@@ -53,8 +54,8 @@ export default function LoginPage() {
         <p className="auth-intro">Review shipment documents, resolve exceptions, and record release decisions.</p>
         <form onSubmit={submit} className="auth-form">
           {error && <div role="alert" className="auth-error">{error}</div>}
-          <label className="auth-field"><span>Email</span><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="username" placeholder="name@company.com" required /></label>
-          <label className="auth-field"><span>Password</span><div className="auth-password"><input value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="Enter your password" required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}</button></div></label>
+          <Input label="Email" value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="username" placeholder="name@company.com" required />
+          <div className="auth-password"><Input label="Password" value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="Enter your password" required /><Button type="button" variant="ghost" shape="square" size="sm" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}</Button></div>
           <Checkbox className="auth-remember" label="Remember this email on this device" checked={remember} onCheckedChange={(checked) => setRemember(Boolean(checked))} />
           <Button type="submit" variant="primary" className="auth-submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</Button>
         </form>

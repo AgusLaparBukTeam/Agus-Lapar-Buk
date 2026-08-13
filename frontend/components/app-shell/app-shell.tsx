@@ -107,7 +107,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const client = useQueryClient();
-  const { data: user } = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
+  const session = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
+  const user = session.data;
   const organizations = useQuery({ queryKey: ["organizations"], queryFn: fetchOrganizations, enabled: Boolean(user) });
   const notifications = useQuery({ queryKey: ["notifications"], queryFn: () => fetchNotifications(), enabled: Boolean(user), refetchInterval: 30_000 });
   const collapsed = useSyncExternalStore(subscribeToSidebar, getSidebarSnapshot, getSidebarServerSnapshot);
@@ -153,7 +154,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     client.clear();
     router.replace("/login");
   }
-  if (!user) return null;
+  if (session.isPending) return <main className="shell-loading" role="status"><span className="shell-loading__mark"><ShieldCheck size={20} weight="bold" /></span><div><strong>Memuat workspace GateGuard</strong><p>Menyiapkan data operasional dan akses Anda.</p></div></main>;
+  if (!user) return <main className="shell-loading shell-loading--error" role="alert"><span className="shell-loading__mark"><ShieldCheck size={20} weight="bold" /></span><div><strong>Sesi tidak tersedia</strong><p>Silakan masuk kembali untuk membuka workspace GateGuard.</p></div></main>;
 
   return <div className="console-shell" data-sidebar-collapsed={collapsed}>
     <aside className="console-sidebar">
