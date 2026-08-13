@@ -62,13 +62,14 @@ export function UploadSlot({
           </Button>
         </div>
       ) : (
-        <button
+        <Button
           type="button"
-          className="mt-5 flex h-16 w-full items-center justify-center rounded-md border border-dashed border-kumo-line text-sm text-kumo-neutral-750 hover:bg-kumo-tint"
+          variant="secondary"
+          className="mt-5 h-16 w-full border border-dashed border-kumo-line text-sm text-kumo-neutral-750"
           onClick={() => inputRef.current?.click()}
         >
           Drop a file here or choose one
-        </button>
+        </Button>
       )}
 
       <input

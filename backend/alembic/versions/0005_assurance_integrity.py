@@ -1,10 +1,8 @@
 """Complete the assurance data model and add worker heartbeat persistence."""
 
-from datetime import UTC, datetime
-from uuid import uuid4
+import sqlalchemy as sa
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "0005_assurance_integrity"
 down_revision = "0004_assurance_control_plane"
@@ -27,26 +25,50 @@ def _create_if_missing(table: str, *columns: sa.Column, **kwargs: object) -> Non
 
 
 def upgrade() -> None:
-    _add_column_if_missing("trusted_shipment_references", sa.Column("organization_id", sa.String(36)))
     _add_column_if_missing(
-        "trusted_shipment_references", sa.Column("source_type", sa.String(40), server_default="MANUAL_AUTHORITATIVE_ENTRY")
+        "trusted_shipment_references", sa.Column("organization_id", sa.String(36))
     )
-    _add_column_if_missing("trusted_shipment_references", sa.Column("source_record_id", sa.String(120)))
+    _add_column_if_missing(
+        "trusted_shipment_references",
+        sa.Column("source_type", sa.String(40), server_default="MANUAL_AUTHORITATIVE_ENTRY"),
+    )
+    _add_column_if_missing(
+        "trusted_shipment_references", sa.Column("source_record_id", sa.String(120))
+    )
     _add_column_if_missing("trusted_shipment_references", sa.Column("content_hash", sa.String(64)))
-    _add_column_if_missing("trusted_shipment_references", sa.Column("version", sa.Integer(), server_default="1"))
-    _add_column_if_missing("trusted_shipment_references", sa.Column("expected_shipper", sa.String(160)))
+    _add_column_if_missing(
+        "trusted_shipment_references", sa.Column("version", sa.Integer(), server_default="1")
+    )
+    _add_column_if_missing(
+        "trusted_shipment_references", sa.Column("expected_shipper", sa.String(160))
+    )
     _add_column_if_missing("review_tasks", sa.Column("organization_id", sa.String(36)))
-    _add_column_if_missing("review_tasks", sa.Column("severity", sa.String(16), server_default="MEDIUM"))
+    _add_column_if_missing(
+        "review_tasks", sa.Column("severity", sa.String(16), server_default="MEDIUM")
+    )
     _add_column_if_missing("review_tasks", sa.Column("exception_id", sa.String(36)))
-    _add_column_if_missing("review_tasks", sa.Column("last_activity_at", sa.DateTime(timezone=True)))
+    _add_column_if_missing(
+        "review_tasks", sa.Column("last_activity_at", sa.DateTime(timezone=True))
+    )
     _add_column_if_missing("release_decisions", sa.Column("organization_id", sa.String(36)))
-    _add_column_if_missing("release_decisions", sa.Column("sequence", sa.Integer(), server_default="1"))
-    _add_column_if_missing("release_decisions", sa.Column("decision_snapshot_json", sa.Text(), server_default="{}"))
+    _add_column_if_missing(
+        "release_decisions", sa.Column("sequence", sa.Integer(), server_default="1")
+    )
+    _add_column_if_missing(
+        "release_decisions", sa.Column("decision_snapshot_json", sa.Text(), server_default="{}")
+    )
     _add_column_if_missing("release_decisions", sa.Column("evidence_hash", sa.String(64)))
-    _add_column_if_missing("release_decisions", sa.Column("rule_pack_versions_json", sa.Text(), server_default="[]"))
-    _add_column_if_missing("release_decisions", sa.Column("assurance_check_versions_json", sa.Text(), server_default="[]"))
+    _add_column_if_missing(
+        "release_decisions", sa.Column("rule_pack_versions_json", sa.Text(), server_default="[]")
+    )
+    _add_column_if_missing(
+        "release_decisions",
+        sa.Column("assurance_check_versions_json", sa.Text(), server_default="[]"),
+    )
     _add_column_if_missing("release_decisions", sa.Column("supersedes_id", sa.String(36)))
-    _add_column_if_missing("release_decisions", sa.Column("invalidated_at", sa.DateTime(timezone=True)))
+    _add_column_if_missing(
+        "release_decisions", sa.Column("invalidated_at", sa.DateTime(timezone=True))
+    )
     _add_column_if_missing("document_requirements", sa.Column("rule_id", sa.String(80)))
     _add_column_if_missing("document_requirements", sa.Column("rule_pack_version", sa.String(40)))
     _add_column_if_missing("requirement_evaluations", sa.Column("rule_id", sa.String(80)))
@@ -62,7 +84,9 @@ def upgrade() -> None:
         sa.Column("unit", sa.String(24), nullable=True),
         sa.Column("unit_price", sa.Float(), nullable=True),
         sa.Column("line_total", sa.Float(), nullable=True),
-        sa.ForeignKeyConstraint(["reference_id"], ["trusted_shipment_references.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["reference_id"], ["trusted_shipment_references.id"], ondelete="CASCADE"
+        ),
     )
     _create_if_missing(
         "screening_matches",
@@ -104,6 +128,7 @@ def upgrade() -> None:
             op.create_index(index_name, table, [column], unique=unique)
 
     from sqlalchemy.orm import Session
+
     from app.repositories.operations import OrganizationRow
     from app.repositories.reconciliations import (
         ReleaseDecisionRow,
@@ -115,8 +140,9 @@ def upgrade() -> None:
 
     session = Session(bind=op.get_bind())
     try:
-        now = datetime.now(UTC)
-        organization = session.scalar(sa.select(OrganizationRow).order_by(OrganizationRow.created_at.asc()))
+        organization = session.scalar(
+            sa.select(OrganizationRow).order_by(OrganizationRow.created_at.asc())
+        )
         if organization:
             for row in session.scalars(sa.select(TrustedShipmentReferenceRow)):
                 if row.organization_id is None:
@@ -129,7 +155,9 @@ def upgrade() -> None:
             for row in session.scalars(sa.select(TrustedReferenceItemRow)):
                 if row.organization_id is None:
                     reference = session.get(TrustedShipmentReferenceRow, row.reference_id)
-                    row.organization_id = reference.organization_id if reference else organization.id
+                    row.organization_id = (
+                        reference.organization_id if reference else organization.id
+                    )
             for row in session.scalars(sa.select(ReviewTaskRow)):
                 if row.organization_id is None:
                     shipment = session.get(ShipmentCaseRow, row.shipment_id)

@@ -1,7 +1,8 @@
 """Persist workspace reference data and keep the assurance schema explicit."""
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0006_reference_data_integrity"
 down_revision = "0005_assurance_integrity"

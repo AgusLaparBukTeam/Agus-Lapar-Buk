@@ -36,10 +36,11 @@ async def main() -> None:
         if mismatch.field == "items.quantity":
             print(f"estimated_discrepancy_value={mismatch.estimated_discrepancy_value}")
             for evidence in mismatch.evidence:
-                print(
-                    f"{evidence.document_type}: "
-                    f"{[(box.page, box.x, box.y, box.width, box.height, box.text) for box in evidence.evidence]}"
-                )
+                boxes = [
+                    (box.page, box.x, box.y, box.width, box.height, box.text)
+                    for box in evidence.evidence
+                ]
+                print(f"{evidence.document_type}: {boxes}")
 
 
 if __name__ == "__main__":

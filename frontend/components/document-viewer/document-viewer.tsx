@@ -35,15 +35,18 @@ export function DocumentViewer({
       <div className="flex h-11 items-center justify-between border-b border-[var(--border)] px-2">
         <div className="flex gap-1" role="tablist" aria-label="Dokumen">
           {(Object.keys(labels) as DocumentType[]).map((type) => (
-            <button
+            <Button
               key={type}
+              type="button"
+              variant="ghost"
+              size="sm"
               role="tab"
               aria-selected={selectedType === type}
               onClick={() => onType(type)}
-              className={`h-8 rounded-md px-3 text-xs font-medium ${selectedType === type ? "bg-[var(--muted)] text-[var(--text)]" : "text-[var(--subtle)] hover:bg-[var(--muted)]"}`}
+              className={`h-8 px-3 text-xs ${selectedType === type ? "bg-[var(--muted)] text-[var(--text)]" : "text-[var(--subtle)]"}`}
             >
               {labels[type]}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="flex gap-1">

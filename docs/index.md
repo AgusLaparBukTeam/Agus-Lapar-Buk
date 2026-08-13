@@ -9,6 +9,7 @@ Dokumentasi GateGuard disusun dengan nama file berbahasa Inggris agar path repos
 | [Quality Review](quality-review.md) | Standar UI, lokalisasi, evidence, AI/OCR, keamanan, serta checklist review. |
 | [Change Summary](change-summary.md) | Ringkasan kapabilitas penting, komponen teknis, keputusan implementasi, dan skenario verifikasi. |
 | [Deployment](deployment.md) | Topologi production, konfigurasi, migration, container, readiness Azure, ingress, backup, serta health check. |
+| [Production Readiness](production-readiness.md) | Quality gate rilis: UI, backend, keamanan, AI/OCR, metadata, deployment, dan rollback. |
 | [Contributing](../CONTRIBUTING.md) | Prinsip kontribusi, setup dependency, validasi, dan standar pull request. |
 | [Security Policy](../SECURITY.md) | Pelaporan kerentanan, area sensitif, dan batas keamanan aplikasi. |
 

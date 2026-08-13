@@ -1,7 +1,8 @@
 """Add shipment assurance, trusted references, and review work queue."""
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0003_shipment_operations"
 down_revision = "0002_auth_and_operations"
@@ -28,7 +29,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["created_by"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_shipment_cases_internal_reference", "shipment_cases", ["internal_reference"])
+    op.create_index(
+        "ix_shipment_cases_internal_reference", "shipment_cases", ["internal_reference"]
+    )
     op.create_index("ix_shipment_cases_status", "shipment_cases", ["status"])
     op.create_index("ix_shipment_cases_risk_level", "shipment_cases", ["risk_level"])
     op.create_index("ix_shipment_cases_assigned_to", "shipment_cases", ["assigned_to"])
@@ -50,7 +53,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("shipment_id"),
     )
-    op.create_index("ix_trusted_shipment_references_shipment_id", "trusted_shipment_references", ["shipment_id"], unique=True)
+    op.create_index(
+        "ix_trusted_shipment_references_shipment_id",
+        "trusted_shipment_references",
+        ["shipment_id"],
+        unique=True,
+    )
 
     op.create_table(
         "review_tasks",
@@ -98,7 +106,9 @@ def downgrade() -> None:
     op.drop_index("ix_review_tasks_status", table_name="review_tasks")
     op.drop_index("ix_review_tasks_shipment_id", table_name="review_tasks")
     op.drop_table("review_tasks")
-    op.drop_index("ix_trusted_shipment_references_shipment_id", table_name="trusted_shipment_references")
+    op.drop_index(
+        "ix_trusted_shipment_references_shipment_id", table_name="trusted_shipment_references"
+    )
     op.drop_table("trusted_shipment_references")
     op.drop_index("ix_shipment_cases_created_at", table_name="shipment_cases")
     op.drop_index("ix_shipment_cases_assigned_to", table_name="shipment_cases")

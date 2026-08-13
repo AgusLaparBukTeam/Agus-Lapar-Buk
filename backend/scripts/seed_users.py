@@ -28,7 +28,11 @@ def seed_user(repository: ReconciliationRepository, prefix: str) -> bool:
 
 def main() -> int:
     prefixes = ("SEED_USER_1", "SEED_USER_2")
-    required = [f"{prefix}_{field}" for prefix in prefixes for field in ("EMAIL", "PASSWORD", "DISPLAY_NAME", "ROLE")]
+    required = [
+        f"{prefix}_{field}"
+        for prefix in prefixes
+        for field in ("EMAIL", "PASSWORD", "DISPLAY_NAME", "ROLE")
+    ]
     missing = [name for name in required if not os.environ.get(name)]
     if missing:
         raise SystemExit(f"Missing required seed settings: {', '.join(missing)}")
