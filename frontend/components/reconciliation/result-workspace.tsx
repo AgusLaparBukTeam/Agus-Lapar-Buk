@@ -6,8 +6,10 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { DocumentViewer } from "@/components/document-viewer/document-viewer";
 import { Button } from "@/components/ui/button";
+import { AppTextarea } from "@/components/ui/textarea";
 import { AppSelect } from "@/components/ui/select";
 import { Dialog } from "@cloudflare/kumo/components/dialog";
+import { Table } from "@cloudflare/kumo/components/table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { overrideDecision } from "@/lib/api";
 import { fetchMe } from "@/lib/api";
@@ -96,17 +98,21 @@ export function ResultWorkspace({
             ) : (
               <div className="max-h-64 overflow-auto">
                 {result.mismatches.map((mismatch) => (
-                  <button
+                  <Button
                     key={mismatch.id}
+                    type="button"
+                    variant="ghost"
                     onClick={() => chooseMismatch(mismatch)}
-                    className={`w-full border-b border-kumo-line p-3 text-left last:border-0 hover:bg-kumo-tint ${selected?.id === mismatch.id ? "bg-kumo-recessed" : ""}`}
+                    className={`h-auto w-full justify-start rounded-none border-b border-kumo-line p-3 text-left last:border-0 ${selected?.id === mismatch.id ? "bg-kumo-recessed" : ""}`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{mismatch.type.replaceAll("_", " ")}</span>
-                      <span className={`rounded border px-1.5 py-0.5 text-sm font-medium ${severityClass(mismatch.severity)}`}>{mismatch.severity}</span>
-                    </div>
-                    <p className="mt-1 text-sm text-kumo-neutral-750">{mismatch.explanation}</p>
-                  </button>
+                    <span className="block w-full">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{mismatch.type.replaceAll("_", " ")}</span>
+                        <span className={`rounded border px-1.5 py-0.5 text-sm font-medium ${severityClass(mismatch.severity)}`}>{mismatch.severity}</span>
+                      </span>
+                      <span className="mt-1 block text-sm text-kumo-neutral-750">{mismatch.explanation}</span>
+                    </span>
+                  </Button>
                 ))}
               </div>
             )}
@@ -117,25 +123,19 @@ export function ResultWorkspace({
               <div className="border-b border-kumo-line px-3 py-2.5">
                 <h3 className="text-sm font-semibold">Perbandingan bukti</h3>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-sm">
-                  <thead className="bg-kumo-recessed text-left">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">Dokumen</th>
-                      <th className="px-3 py-2 font-medium">Nilai</th>
-                      <th className="px-3 py-2 font-medium">Tingkat keyakinan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+              <div className="table-scroll">
+                <Table>
+                  <Table.Header sticky><Table.Row><Table.Head>Dokumen</Table.Head><Table.Head>Nilai</Table.Head><Table.Head>Tingkat keyakinan</Table.Head></Table.Row></Table.Header>
+                  <Table.Body>
                     {selected.evidence.map((ev, index) => (
-                      <tr key={`${ev.document_type}-${index}`} className="border-t border-kumo-line">
-                        <td className="px-3 py-2">{docLabels[ev.document_type]}</td>
-                        <td className="max-w-56 break-words px-3 py-2 font-medium">{String(ev.value ?? "—")}</td>
-                        <td className="px-3 py-2 mono">{Math.round(ev.confidence * 100)}%</td>
-                      </tr>
+                      <Table.Row key={`${ev.document_type}-${index}`}>
+                        <Table.Cell>{docLabels[ev.document_type]}</Table.Cell>
+                        <Table.Cell><strong className="break-words">{String(ev.value ?? "—")}</strong></Table.Cell>
+                        <Table.Cell><span className="mono">{Math.round(ev.confidence * 100)}%</span></Table.Cell>
+                      </Table.Row>
                     ))}
-                  </tbody>
-                </table>
+                  </Table.Body>
+                </Table>
               </div>
               {selected.estimated_discrepancy_value != null && (
                 <div className="border-t border-kumo-line bg-kumo-warning-tint px-3 py-2 text-sm text-kumo-warning">
@@ -223,16 +223,15 @@ function OverrideDialog({
           Keputusan akhir
           <AppSelect ariaLabel="Keputusan akhir" value={decision} onValueChange={(value) => setDecision(value as ReconciliationStatus)} options={[{ value: "CLEAR", label: "CLEAR" }, { value: "REVIEW", label: "REVIEW" }, { value: "HOLD", label: "HOLD" }]} />
         </label>
-        <label className="override-dialog__field">
-          Alasan override
-          <textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={4}
-            maxLength={1000}
-            placeholder="Jelaskan verifikasi atau koreksi yang dilakukan…"
-          />
-        </label>
+        <AppTextarea
+          label="Alasan override"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          rows={4}
+          maxLength={1000}
+          placeholder="Jelaskan verifikasi atau koreksi yang dilakukan…"
+          description="Minimal 5 karakter. Catatan ini tersimpan pada audit trail."
+        />
         <div className="form-panel__actions">
           <Button variant="secondary" onClick={onClose}>Batal</Button>
           <Button

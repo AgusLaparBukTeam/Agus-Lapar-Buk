@@ -1,5 +1,6 @@
 "use client";
 
+import { Input } from "@cloudflare/kumo/components/input";
 import { Table } from "@cloudflare/kumo/components/table";
 import { MagnifyingGlassIcon as MagnifyingGlass, PlusIcon as Plus, WarningCircleIcon as WarningCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
@@ -106,7 +107,7 @@ export function OperationRegister({ kind, includeHeader = true }: { kind: keyof 
   const rows = useMemo(() => result.data?.items || [], [result.data]);
   return <div className="operations-page">
     {includeHeader && <PageHeader title={config.title} description={config.description} actions={config.action ? <ActionLink href={config.action.href} icon={Plus}>{config.action.label}</ActionLink> : undefined} />}
-    <div className="operations-toolbar"><label className="operations-search"><MagnifyingGlass size={16} /><span className="sr-only">Search {config.title}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${config.title.toLowerCase()}...`} /></label><span className="muted-label">{rows.length} records</span></div>
+    <div className="operations-toolbar"><div className="operations-search"><MagnifyingGlass size={16} aria-hidden="true" /><Input className="operations-search__input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${config.title.toLowerCase()}...`} aria-label={`Search ${config.title}`} /><span className="muted-label">{rows.length} records</span></div></div>
     {result.isError ? <div className="notice notice--danger"><WarningCircle size={18} /> This register is not available right now.</div> : <section className="data-panel data-panel--wide"><div className="table-scroll"><Table><Table.Header sticky><Table.Row>{config.columns.map((column) => <Table.Head key={column.label}>{column.label}</Table.Head>)}</Table.Row></Table.Header><Table.Body>{rows.map((row) => <Table.Row key={String(row.id)}>{config.columns.map((column) => <Table.Cell key={column.label}>{column.value(row)}</Table.Cell>)}</Table.Row>)}</Table.Body></Table></div>{!result.isPending && rows.length === 0 && <div className="empty-state"><strong>No {config.title.toLowerCase()} yet</strong><span>Records appear here when your team creates them in this workspace.</span></div>}</section>}
   </div>;
 }

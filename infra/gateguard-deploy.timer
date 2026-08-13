@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GateGuard main branch for deployable changes every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=gateguard-deploy.service
+
+[Install]
+WantedBy=timers.target

@@ -3,8 +3,9 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "0004_assurance_control_plane"
 down_revision = "0003_shipment_operations"
@@ -16,7 +17,11 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     with op.batch_alter_table("users") as batch:
-        batch.add_column(sa.Column("must_change_password", sa.Boolean(), nullable=False, server_default=sa.false()))
+        batch.add_column(
+            sa.Column(
+                "must_change_password", sa.Boolean(), nullable=False, server_default=sa.false()
+            )
+        )
 
     with op.batch_alter_table("audit_events") as batch:
         batch.add_column(sa.Column("organization_id", sa.String(length=36), nullable=True))
@@ -48,26 +53,33 @@ def upgrade() -> None:
     with op.batch_alter_table("shipment_cases") as batch:
         for item in shipment_columns:
             name, column, *default = item
-            batch.add_column(sa.Column(name, column, nullable=True, server_default=default[0] if default else None))
+            batch.add_column(
+                sa.Column(
+                    name, column, nullable=True, server_default=default[0] if default else None
+                )
+            )
     op.create_index("ix_shipment_cases_organization_id", "shipment_cases", ["organization_id"])
     op.create_index("ix_shipment_cases_facility_id", "shipment_cases", ["facility_id"])
 
     # Importing the ORM module registers all new operational tables on the
     # existing Base. create_all is safe here because it only creates missing
     # tables; the explicit column changes above handle legacy tables.
-    from app.repositories.operations import Base
     import app.repositories.operations as _operations  # noqa: F401
+    from app.repositories.operations import Base
 
     Base.metadata.create_all(bind=bind)
 
     from sqlalchemy.orm import Session
+
     from app.repositories.operations import FacilityRow, OrganizationRow, WorkspaceMembershipRow
     from app.repositories.reconciliations import ShipmentCaseRow, UserRow
 
     session = Session(bind=bind)
     try:
         now = datetime.now(UTC)
-        organization = session.scalar(sa.select(OrganizationRow).order_by(OrganizationRow.created_at.asc()))
+        organization = session.scalar(
+            sa.select(OrganizationRow).order_by(OrganizationRow.created_at.asc())
+        )
         if organization is None:
             organization = OrganizationRow(
                 id=str(uuid4()),
@@ -82,21 +94,43 @@ def upgrade() -> None:
             )
             session.add(organization)
             session.flush()
-            session.add(FacilityRow(
-                id=str(uuid4()), organization_id=organization.id, name="Primary facility", code="PRIMARY",
-                country_code=None, location=None, timezone="UTC", active=True, created_at=now, updated_at=now,
-            ))
+            session.add(
+                FacilityRow(
+                    id=str(uuid4()),
+                    organization_id=organization.id,
+                    name="Primary facility",
+                    code="PRIMARY",
+                    country_code=None,
+                    location=None,
+                    timezone="UTC",
+                    active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
         for user in session.scalars(sa.select(UserRow)):
-            membership = session.scalar(sa.select(WorkspaceMembershipRow).where(
-                WorkspaceMembershipRow.organization_id == organization.id,
-                WorkspaceMembershipRow.user_id == user.id,
-            ))
+            membership = session.scalar(
+                sa.select(WorkspaceMembershipRow).where(
+                    WorkspaceMembershipRow.organization_id == organization.id,
+                    WorkspaceMembershipRow.user_id == user.id,
+                )
+            )
             if membership is None:
-                session.add(WorkspaceMembershipRow(
-                    id=str(uuid4()), organization_id=organization.id, user_id=user.id,
-                    role=user.role, active=True, created_at=now,
-                ))
-        session.execute(sa.update(ShipmentCaseRow).where(ShipmentCaseRow.organization_id.is_(None)).values(organization_id=organization.id))
+                session.add(
+                    WorkspaceMembershipRow(
+                        id=str(uuid4()),
+                        organization_id=organization.id,
+                        user_id=user.id,
+                        role=user.role,
+                        active=True,
+                        created_at=now,
+                    )
+                )
+        session.execute(
+            sa.update(ShipmentCaseRow)
+            .where(ShipmentCaseRow.organization_id.is_(None))
+            .values(organization_id=organization.id)
+        )
         session.commit()
     finally:
         session.close()
@@ -109,7 +143,25 @@ def downgrade() -> None:
     op.drop_index("ix_shipment_cases_facility_id", table_name="shipment_cases")
     op.drop_index("ix_shipment_cases_organization_id", table_name="shipment_cases")
     with op.batch_alter_table("shipment_cases") as batch:
-        for name in ("closed_at", "dispatched_at", "release_authorized_at", "last_assessed_at", "assessment_started_at", "risk_factors_json", "risk_score", "priority", "currency", "incoterm", "destination_location", "destination_country", "origin_location", "origin_country", "consignment_reference", "facility_id", "organization_id"):
+        for name in (
+            "closed_at",
+            "dispatched_at",
+            "release_authorized_at",
+            "last_assessed_at",
+            "assessment_started_at",
+            "risk_factors_json",
+            "risk_score",
+            "priority",
+            "currency",
+            "incoterm",
+            "destination_location",
+            "destination_country",
+            "origin_location",
+            "origin_country",
+            "consignment_reference",
+            "facility_id",
+            "organization_id",
+        ):
             batch.drop_column(name)
     with op.batch_alter_table("users") as batch:
         batch.drop_column("must_change_password")
