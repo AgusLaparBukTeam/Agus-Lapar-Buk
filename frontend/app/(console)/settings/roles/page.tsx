@@ -3,7 +3,30 @@
 import { Table } from "@cloudflare/kumo/components/table";
 import { ShieldCheckIcon as ShieldCheck } from "@phosphor-icons/react";
 import { PageHeader } from "@/components/ui/page-header";
+import { useSettingsCopy } from "@/components/settings/settings-copy";
 
-const permissions = [["shipment.read", "View shipment cases", true, true, true], ["shipment.create", "Create shipment cases", true, true, true], ["document.upload", "Upload evidence", true, true, true], ["assessment.run", "Run assurance checks", true, true, true], ["exception.resolve", "Resolve operational exceptions", false, true, true], ["release.hold", "Place shipment on hold", false, true, true], ["release.authorize", "Authorize release", false, true, true], ["release.second_approve", "Provide second approval", false, true, true], ["audit.read", "Read activity log", false, true, true], ["people.manage", "Manage people", false, false, true], ["workspace.manage", "Manage workspace", false, false, true]] as const;
+export default function RolesPage() {
+  const { t } = useSettingsCopy();
+  const permissions = [
+    ["shipment.read", t.viewShipmentCases, true, true, true],
+    ["shipment.create", t.createShipmentCases, true, true, true],
+    ["document.upload", t.uploadEvidence, true, true, true],
+    ["assessment.run", t.runAssuranceChecks, true, true, true],
+    ["exception.resolve", t.resolveExceptions, false, true, true],
+    ["release.hold", t.placeShipmentHold, false, true, true],
+    ["release.authorize", t.authorizeRelease, false, true, true],
+    ["release.second_approve", t.provideSecondApproval, false, true, true],
+    ["audit.read", t.readActivityLog, false, true, true],
+    ["people.manage", t.managePeoplePermission, false, false, true],
+    ["workspace.manage", t.manageWorkspacePermission, false, false, true],
+  ] as const;
 
-export default function RolesPage() { return <div className="operations-page"><PageHeader icon={ShieldCheck} title="Roles & permissions" description="System-managed roles keep shipment responsibilities clear without exposing unsafe custom policy editing." /><section className="data-panel data-panel--wide"><div className="table-scroll"><Table><Table.Header sticky><Table.Row><Table.Head>Permission</Table.Head><Table.Head>Operator</Table.Head><Table.Head>Reviewer</Table.Head><Table.Head>Administrator</Table.Head></Table.Row></Table.Header><Table.Body>{permissions.map(([key, label, operator, reviewer, admin]) => <Table.Row key={key}><Table.Cell><strong>{label}</strong><small>{key}</small></Table.Cell><Table.Cell>{operator ? "Allowed" : "—"}</Table.Cell><Table.Cell>{reviewer ? "Allowed" : "—"}</Table.Cell><Table.Cell>{admin ? "Allowed" : "—"}</Table.Cell></Table.Row>)}</Table.Body></Table></div></section></div>; }
+  return (
+    <div className="operations-page">
+      <PageHeader icon={ShieldCheck} title={t.rolesPermissions} description={t.rolesPermissionsPageDescription} />
+      <section className="data-panel data-panel--wide">
+        <div className="table-scroll"><Table><Table.Header sticky><Table.Row><Table.Head>{t.permission}</Table.Head><Table.Head>Operator</Table.Head><Table.Head>Reviewer</Table.Head><Table.Head>Administrator</Table.Head></Table.Row></Table.Header><Table.Body>{permissions.map(([key, label, operator, reviewer, admin]) => <Table.Row key={key}><Table.Cell><span className="table-cell-primary">{label}</span><small>{key}</small></Table.Cell><Table.Cell>{operator ? t.allowed : "—"}</Table.Cell><Table.Cell>{reviewer ? t.allowed : "—"}</Table.Cell><Table.Cell>{admin ? t.allowed : "—"}</Table.Cell></Table.Row>)}</Table.Body></Table></div>
+      </section>
+    </div>
+  );
+}
