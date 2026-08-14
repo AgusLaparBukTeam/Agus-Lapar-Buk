@@ -1,7 +1,6 @@
 /*
 
 
-
  * Kumo Button renders children inside a `span.contents` wrapper. These rules
  * preserve the compact Cloudflare command-palette pattern: one medium label
  * above one subtle metadata line, rather than two inline text fragments.
@@ -12,16 +11,17 @@
   font-weight: 400 !important;
 }
 
-.search-result .contents > span {
+.search-result .contents > .search-result__copy {
   display: flex !important;
   min-width: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
 }
 
-.search-result .contents > span > strong,
-.search-result .contents > span > small {
+.search-result__label,
+.search-result__group {
   display: block;
   overflow: hidden;
   width: 100%;
@@ -29,21 +29,21 @@
   white-space: nowrap;
 }
 
-.search-result .contents > span > strong {
+.search-result__label {
   color: var(--app-text);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.35;
 }
 
-.search-result .contents > span > small {
+.search-result__group {
   color: var(--app-muted);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 400;
   line-height: 1.35;
 }
 
-/* Kelola: explicit hierarchy replaces strong tags in cards and tables. */
+/* Kelola: explicit semantic hierarchy instead of strong tags in links and tables. */
 .settings-card__copy { min-width: 0; }
 .settings-card .settings-card__title { color: var(--app-text); font-size: 14px; font-weight: 500; line-height: 1.4; }
 .settings-card .settings-card__description { margin-top: 3px; color: var(--app-muted); font-size: 14px; font-weight: 400; line-height: 1.45; }
@@ -53,3 +53,7 @@
 .empty-state__title + span { font-weight: 400; }
 .settings-context-rail dt, .settings-context-rail dd { font-weight: 400; }
 .settings-context-rail dd { color: var(--app-text); }
+
+/* Console navigation and workspace form retain a quiet, legible Cloudflare hierarchy. */
+.console-sidebar__label { color: var(--app-muted); font-size: 14px; font-weight: 400; line-height: 1.35; }
+.form-grid label > [role="combobox"] { width: 100%; }
