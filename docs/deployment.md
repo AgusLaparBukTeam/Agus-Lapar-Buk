@@ -62,7 +62,7 @@ Container berjalan sebagai non-root user dengan Linux capability yang dibatasi. 
 
 ## Azure Production VM
 
-GateGuard saat ini dijalankan pada satu Azure VM `Standard_B2ats_v2` berbasis ARM di Indonesia Central. Konfigurasi ini menggunakan satu OS disk Standard LRS 32 GiB, satu static public IPv4, VNet/subnet/NSG minimum, dan swap 2 GiB. PostgreSQL, FastAPI, worker, serta Next.js tetap berada dalam satu `docker-compose.prod.yml`; tidak ada managed database, load balancer, NAT gateway, Log Analytics, atau service pendukung berbayar lain pada topology ini.
+GateGuard saat ini dijalankan pada satu Azure VM x86_64 (`linux/amd64`) di Indonesia Central. Konfigurasi ini menggunakan satu OS disk Standard LRS 32 GiB, satu static public IPv4, VNet/subnet/NSG minimum, dan swap 2 GiB. PostgreSQL, FastAPI, worker, serta Next.js tetap berada dalam satu `docker-compose.prod.yml`; tidak ada managed database, load balancer, NAT gateway, Log Analytics, atau service pendukung berbayar lain pada topology ini.
 
 Konfigurasi tersebut dipilih agar biaya tetap berada di bawah batas operasional $20 per bulan. Budget atau alert biaya harus dipantau melalui Azure Cost Management, tetapi alert hanya memberi notifikasi dan tidak menghentikan penggunaan secara otomatis. Jangan menambah disk, public IP, backup vault, managed database, atau service observability tanpa menilai kembali dampak biayanya.
 
@@ -72,9 +72,9 @@ Secret production berada pada `/opt/gateguard/.env` dengan permission ketat dan 
 
 ### Automatic Deployment
 
-Setiap merge ke `main` menjalankan workflow CI. Setelah job `Verify` sukses, job `Publish production images` membangun image `linux/arm64` di runner GitHub dan menerbitkan tag immutable SHA ke GitHub Container Registry (GHCR). VM tetap menjalankan `gateguard-deploy.timer` setiap lima menit, tetapi tugasnya hanya menarik tag SHA yang telah dipublikasikan lalu melakukan restart Compose dengan `--no-build`. Dengan demikian, compile Next.js dan type-check tidak lagi membebani VM 1 GiB.
+Setiap push atau merge ke `main` menjalankan workflow CI. Setelah job `Verify` sukses, job `Publish production images` membangun image `linux/amd64` di runner GitHub dan menerbitkan tag immutable SHA ke GitHub Container Registry (GHCR). VM tetap menjalankan `gateguard-deploy.timer` setiap lima menit, tetapi tugasnya hanya menarik tag SHA yang telah dipublikasikan lalu melakukan restart Compose dengan `--no-build`. Dengan demikian, compile Next.js dan type-check tidak lagi membebani VM 1 GiB.
 
-Package `gateguard-backend` dan `gateguard-frontend` harus diatur **Public** pada GitHub Packages setelah publikasi pertama. Repository sumber sudah public; package public dapat ditarik anonim oleh VM sehingga tidak ada PAT, password registry, atau secret aplikasi tambahan yang disimpan di GitHub. Tag `latest` hanya untuk inspeksi; VM selalu memakai tag SHA immutable yang sama dengan commit `main`.
+Package `gateguard-backend` dan `gateguard-frontend` saat ini private. Akun service VM `gateguardadmin` menyimpan autentikasi GHCR yang dibatasi pada token classic `read:packages` di `~/.docker/config.json` dengan permission `0600`; token tidak boleh dimasukkan ke Git, image, `.env`, log CI, atau UI aplikasi. Tag `latest` hanya untuk inspeksi; VM selalu memakai tag SHA immutable yang sama dengan commit `main`. Rotasi token dilakukan sebelum masa berlaku habis dengan `docker logout ghcr.io` dan `docker login ghcr.io`, lalu token lama dicabut di GitHub.
 
 Aktivasi awal setelah pull request pipeline di-merge dilakukan dari VM oleh administrator:
 
@@ -91,7 +91,7 @@ sudo journalctl -u gateguard-deploy.service -n 100 --no-pager
 cat /var/lib/gateguard/last-successful-sha
 ```
 
-Service memakai lock untuk mencegah deployment tumpang tindih, menunggu health PostgreSQL serta backend, dan menguji `/login` sebelum menyimpan SHA baru sebagai sukses. Jalur ini tidak membutuhkan secret aplikasi di GitHub dan tidak menambah resource Azure.
+Service memakai lock untuk mencegah deployment tumpang tindih, menunggu health PostgreSQL serta backend, dan menguji `/login` sebelum menyimpan SHA baru sebagai sukses. Jalur ini tidak membutuhkan secret aplikasi di GitHub, tidak menambah resource Azure, dan hanya menggunakan credential package read-only pada VM untuk menarik image private.
 
 ## Dependency Locking
 
