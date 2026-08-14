@@ -1,12 +1,27 @@
+"use client";
+
 import Link from "next/link";
 import { PageHeader } from "@/components/ui/page-header";
-
-const accessAreas = [
-  ["/settings/people", "People", "Add or deactivate workspace members and assign their responsibility."],
-  ["/settings/roles", "Roles and permissions", "See what operators, reviewers, and administrators can do."],
-  ["/settings/security", "Security", "Review sign-in, session, and workspace access protections."],
-] as const;
+import { useSettingsCopy } from "@/components/settings/settings-copy";
 
 export default function AccessSettingsPage() {
-  return <div className="operations-page"><PageHeader title="Access" description="Keep the right people involved in preparing, reviewing, and approving shipment cases." /><div className="settings-overview-grid"><section className="data-panel"><div className="data-panel__header"><div><h2>Access controls</h2><p>Choose a workspace access area to continue.</p></div></div><div className="settings-card-list">{accessAreas.map(([href, title, description]) => <Link className="settings-card" href={href} key={href}><div><strong>{title}</strong><span>{description}</span></div><span aria-hidden="true">›</span></Link>)}</div></section><aside className="settings-context-rail"><div className="context-rail__eyebrow">Responsibility</div><h2>Clear ownership</h2><p className="muted-copy">Operators prepare evidence. Reviewers resolve findings and approve decisions. Administrators control workspace access.</p></aside></div></div>;
+  const { t } = useSettingsCopy();
+  const accessAreas = [
+    ["/settings/people", t.peopleAndAccess, t.peopleAccessDescription],
+    ["/settings/roles", t.rolesPermissions, t.rolesAccessDescription],
+    ["/settings/security", t.security, t.securityAccessDescription],
+  ] as const;
+
+  return (
+    <div className="operations-page">
+      <PageHeader title={t.access} description={t.accessPageDescription} />
+      <div className="settings-overview-grid">
+        <section className="data-panel" aria-labelledby="access-controls-title">
+          <div className="data-panel__header"><div><h2 id="access-controls-title">{t.accessControls}</h2><p>{t.accessControlsHint}</p></div></div>
+          <div className="settings-card-list">{accessAreas.map(([href, title, description]) => <Link className="settings-card" href={href} key={href}><span className="settings-card__copy"><span className="settings-card__title">{title}</span><span className="settings-card__description">{description}</span></span><span className="settings-card__chevron" aria-hidden="true">›</span></Link>)}</div>
+        </section>
+        <aside className="settings-context-rail" aria-label={t.responsibility}><div className="context-rail__eyebrow">{t.responsibility}</div><h2>{t.clearOwnership}</h2><p className="muted-copy">{t.ownershipHint}</p></aside>
+      </div>
+    </div>
+  );
 }
