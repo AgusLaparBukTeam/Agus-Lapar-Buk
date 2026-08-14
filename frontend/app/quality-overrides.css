@@ -1,6 +1,4 @@
 /*
-
-
  * Kumo Button renders children inside a `span.contents` wrapper. These rules
  * preserve the compact Cloudflare command-palette pattern: one medium label
  * above one subtle metadata line, rather than two inline text fragments.
@@ -9,6 +7,11 @@
   min-height: 48px !important;
   padding-block: 7px !important;
   font-weight: 400 !important;
+}
+
+/* Undo the legacy structural selector: Kumo's wrapper must not occupy the icon grid column. */
+.search-result > .contents {
+  display: contents !important;
 }
 
 .search-result .contents > .search-result__copy {
@@ -44,16 +47,72 @@
 }
 
 /* Kelola: explicit semantic hierarchy instead of strong tags in links and tables. */
-.settings-card__copy { min-width: 0; }
-.settings-card .settings-card__title { color: var(--app-text); font-size: 14px; font-weight: 500; line-height: 1.4; }
-.settings-card .settings-card__description { margin-top: 3px; color: var(--app-muted); font-size: 14px; font-weight: 400; line-height: 1.45; }
-.settings-card .settings-card__chevron { flex: 0 0 auto; color: var(--app-muted); font-size: 20px; font-weight: 400; line-height: 1; }
-.table-cell-primary, .empty-state__title { display: block; color: var(--app-text); font-size: 14px; font-weight: 500; line-height: 1.4; }
-.table-cell-primary + small { display: block; margin-top: 2px; color: var(--app-muted); font-size: 14px; font-weight: 400; line-height: 1.4; }
-.empty-state__title + span { font-weight: 400; }
-.settings-context-rail dt, .settings-context-rail dd { font-weight: 400; }
-.settings-context-rail dd { color: var(--app-text); }
+.settings-card__copy {
+  min-width: 0;
+}
+
+.settings-card .settings-card__title {
+  color: var(--app-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.settings-card .settings-card__description {
+  margin-top: 3px;
+  color: var(--app-muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings-card .settings-card__chevron {
+  flex: 0 0 auto;
+  color: var(--app-muted);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.table-cell-primary,
+.empty-state__title {
+  display: block;
+  color: var(--app-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.table-cell-primary + small {
+  display: block;
+  margin-top: 2px;
+  color: var(--app-muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.empty-state__title + span {
+  font-weight: 400;
+}
+
+.settings-context-rail dt,
+.settings-context-rail dd {
+  font-weight: 400;
+}
+
+.settings-context-rail dd {
+  color: var(--app-text);
+}
 
 /* Console navigation and workspace form retain a quiet, legible Cloudflare hierarchy. */
-.console-sidebar__label { color: var(--app-muted); font-size: 14px; font-weight: 400; line-height: 1.35; }
-.form-grid label > [role="combobox"] { width: 100%; }
+.console-sidebar__label {
+  color: var(--app-muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.form-grid label > [role="combobox"] {
+  width: 100%;
+}
