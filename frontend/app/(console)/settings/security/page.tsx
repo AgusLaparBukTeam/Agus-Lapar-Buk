@@ -1,2 +1,31 @@
+"use client";
+
 import { PageHeader } from "@/components/ui/page-header";
-export default function SecuritySettingsPage() { return <div className="operations-page"><PageHeader title="Security" description="Review the protections that keep workspace access and decisions accountable." /><div className="dashboard-grid"><section className="data-panel"><h2>Authentication</h2><dl className="definition-list"><div><dt>Sessions</dt><dd>Opaque, server-side, revocable</dd></div><div><dt>Passwords</dt><dd>Argon2 hashed</dd></div><div><dt>Secure cookie</dt><dd>Read-only deployment setting</dd></div></dl></section><section className="data-panel"><h2>Access</h2><dl className="definition-list"><div><dt>Organization scoping</dt><dd>Membership checked server-side</dd></div><div><dt>API access</dt><dd>Service accounts and hashed tokens</dd></div><div><dt>Security events</dt><dd>Recorded in Activity log</dd></div></dl></section></div></div>; }
+import { useSettingsCopy } from "@/components/settings/settings-copy";
+
+export default function SecuritySettingsPage() {
+  const { t } = useSettingsCopy();
+  return (
+    <div className="operations-page">
+      <PageHeader title={t.security} description={t.securityPageDescription} />
+      <div className="dashboard-grid">
+        <section className="data-panel" aria-labelledby="security-authentication-title">
+          <h2 id="security-authentication-title">{t.authentication}</h2>
+          <dl className="definition-list">
+            <div><dt>{t.sessions}</dt><dd>{t.opaqueServerSessions}</dd></div>
+            <div><dt>{t.passwords}</dt><dd>{t.argonHashed}</dd></div>
+            <div><dt>{t.secureCookie}</dt><dd>{t.readOnlyDeploymentSetting}</dd></div>
+          </dl>
+        </section>
+        <section className="data-panel" aria-labelledby="security-access-title">
+          <h2 id="security-access-title">{t.access}</h2>
+          <dl className="definition-list">
+            <div><dt>{t.organizationScoping}</dt><dd>{t.membershipCheckedServerSide}</dd></div>
+            <div><dt>{t.apiAccess}</dt><dd>{t.serviceAccountsAndTokens}</dd></div>
+            <div><dt>{t.securityEvents}</dt><dd>{t.recordedInActivityLog}</dd></div>
+          </dl>
+        </section>
+      </div>
+    </div>
+  );
+}
