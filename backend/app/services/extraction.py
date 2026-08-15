@@ -404,6 +404,64 @@ def parse_shipment_text(text: str, document_type: DocumentType, filename: str) -
     )
 
 
+OPENAI_FIELDS = frozenset(
+    {
+        "detected_document_type",
+        "document_id",
+        "shipment_id",
+        "sender",
+        "recipient",
+        "destination",
+        "document_total",
+        "items",
+    }
+)
+OPENAI_ITEM_FIELDS = frozenset({"sku", "description", "quantity", "unit_price", "line_total"})
+
+
+def _validate_openai_payload(value: Any) -> dict[str, Any]:
+    """Validate JSON-object provider output before it can affect a decision."""
+    if not isinstance(value, dict) or set(value) != OPENAI_FIELDS:
+        raise ProviderError("The AI provider returned an invalid structured response.")
+    detected = value.get("detected_document_type")
+    if detected is not None and detected not in {item.value for item in DocumentType}:
+        raise ProviderError("The AI provider returned an invalid document type.")
+    for name, limit in (
+        ("document_id", 200),
+        ("shipment_id", 200),
+        ("sender", 500),
+        ("recipient", 500),
+        ("destination", 2000),
+    ):
+        field_value = value.get(name)
+        if field_value is not None and (
+            not isinstance(field_value, str) or len(field_value) > limit
+        ):
+            raise ProviderError("The AI provider returned an invalid field value.")
+    total = value.get("document_total")
+    if total is not None and (isinstance(total, bool) or not isinstance(total, (int, float))):
+        raise ProviderError("The AI provider returned an invalid numeric value.")
+    items = value.get("items")
+    if not isinstance(items, list) or len(items) > MAX_LINE_ITEMS:
+        raise ProviderError("The AI provider returned an invalid item list.")
+    for item in items:
+        if not isinstance(item, dict) or set(item) != OPENAI_ITEM_FIELDS:
+            raise ProviderError("The AI provider returned an invalid line item.")
+        for name, limit in (("sku", 120), ("description", 500)):
+            field_value = item.get(name)
+            if field_value is not None and (
+                not isinstance(field_value, str) or len(field_value) > limit
+            ):
+                raise ProviderError("The AI provider returned an invalid line item.")
+        for name in ("quantity", "unit_price", "line_total"):
+            field_value = item.get(name)
+            if field_value is not None and (
+                isinstance(field_value, bool) or not isinstance(field_value, (int, float))
+            ):
+                raise ProviderError("The AI provider returned an invalid line item.")
+    return value
+
+
 OPENAI_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -457,18 +515,35 @@ class OpenAIExtractor(Extractor):
         if not self.settings.openai_api_key:
             raise ExtractionUnavailableError("OpenAI extraction is not configured.")
 
-        b64 = base64.b64encode(upload.data).decode("ascii")
         if upload.media_type.startswith("image/"):
-            content_item = {
-                "type": "input_image",
-                "image_url": f"data:{upload.media_type};base64,{b64}",
-                "detail": "high",
+            b64 = base64.b64encode(upload.data).decode("ascii")
+            content_item: dict[str, Any] = {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{upload.media_type};base64,{b64}",
+                    "detail": "high",
+                },
             }
         else:
+            try:
+                word_boxes = await asyncio.to_thread(
+                    _pdf_word_boxes,
+                    upload.data,
+                    self.settings.max_pdf_pages,
+                )
+            except Exception as exc:
+                raise ExtractionUnavailableError(
+                    "The PDF text layer could not be read for AI extraction."
+                ) from exc
+            document_text = " ".join(box.text for box in word_boxes).strip()
+            if len(document_text) < 20:
+                raise ExtractionUnavailableError(
+                    "No usable PDF text layer was found. Configure OCR for this document."
+                )
             content_item = {
-                "type": "input_file",
-                "filename": upload.filename,
-                "file_data": b64,
+                "type": "text",
+                "text": "Untrusted document text follows. Extract only visible fields:\n"
+                + document_text[: self.settings.max_pdf_text_chars],
             }
 
         extraction_policy = (
@@ -483,33 +558,21 @@ class OpenAIExtractor(Extractor):
             "Independently classify the visible document as invoice, packing_list, "
             "or delivery_order; "
             "return null when the type is not clear. Return null for missing values. "
-            "Quantities and prices must be numeric."
+            "Quantities and prices must be numeric. "
+            "Return exactly one JSON object with the canonical fields and no prose."
         )
+        user_content: str | list[dict[str, Any]]
+        if content_item["type"] == "text":
+            user_content = f"{prompt}\n\n{content_item['text']}"
+        else:
+            user_content = [{"type": "text", "text": prompt}, content_item]
         payload = {
             "model": self.settings.openai_model,
-            "store": False,
-            "input": [
-                {
-                    "role": "developer",
-                    "content": [{"type": "input_text", "text": extraction_policy}],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": prompt},
-                        content_item,
-                    ],
-                },
+            "messages": [
+                {"role": "developer", "content": extraction_policy},
+                {"role": "user", "content": user_content},
             ],
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "shipment_document",
-                    "description": "Canonical fields extracted from one shipment document.",
-                    "schema": OPENAI_SCHEMA,
-                    "strict": True,
-                }
-            },
+            "response_format": {"type": "json_object"},
         }
         headers = {
             "Authorization": f"Bearer {self.settings.openai_api_key}",
@@ -524,7 +587,7 @@ class OpenAIExtractor(Extractor):
                 ) as client,
             ):
                 response = await client.post(
-                    self.settings.openai_base_url.rstrip("/") + "/responses",
+                    self.settings.openai_base_url.rstrip("/") + "/chat/completions",
                     headers=headers,
                     json=payload,
                 )
@@ -544,9 +607,16 @@ class OpenAIExtractor(Extractor):
                 "The configured AI provider could not complete extraction."
             ) from exc
 
+        if not isinstance(body.get("choices"), list):
+            logger.warning(
+                "openai_provider_invalid_completion keys=%s error=%s",
+                sorted(body.keys()),
+                str(body.get("error", ""))[:120],
+            )
+            raise ProviderError("The configured AI provider returned an invalid completion.")
         text = _response_output_text(body)
         try:
-            data = json.loads(text)
+            data = _validate_openai_payload(json.loads(text))
         except json.JSONDecodeError as exc:
             raise ProviderError("The AI provider returned an invalid structured response.") from exc
 
@@ -559,11 +629,7 @@ class OpenAIExtractor(Extractor):
                 "openai_structured_heuristic",
             )
 
-        raw_items = data.get("items")
-        if not isinstance(raw_items, list):
-            raise ProviderError("The AI provider returned an invalid item list.")
-        if len(raw_items) > MAX_LINE_ITEMS:
-            raise ProviderError("The AI provider returned too many line items.")
+        raw_items = data["items"]
         items = []
         for item in raw_items:
             if not isinstance(item, dict):
@@ -642,11 +708,12 @@ class OpenAIExtractor(Extractor):
 
 
 def _response_output_text(body: dict[str, Any]) -> str:
-    for output in body.get("output", []):
-        if output.get("type") == "message":
-            for content in output.get("content", []):
-                if content.get("type") == "output_text":
-                    return str(content.get("text", ""))
+    choices = body.get("choices")
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str) and content:
+            return content
     raise ProviderError("The AI provider returned no structured output.")
 
 
@@ -907,16 +974,23 @@ class ExtractionRouter:
 
         # AUTO: try local text extraction first for PDFs. Only use a model when necessary.
         local_error: Exception | None = None
+        local_document: ShipmentDocument | None = None
         if upload.media_type == "application/pdf":
             try:
-                doc = await self.local.extract(upload, document_type)
-                if _critical_complete(doc, self.settings.critical_confidence_threshold):
-                    return await finish(doc)
+                local_document = await self.local.extract(upload, document_type)
+                if _critical_complete(local_document, self.settings.critical_confidence_threshold):
+                    return await finish(local_document)
             except ExtractionUnavailableError as exc:
                 local_error = exc
 
         if self.settings.openai_api_key:
-            return await finish(await self.openai.extract(extraction_upload, document_type))
+            try:
+                return await finish(await self.openai.extract(extraction_upload, document_type))
+            except ProviderError:
+                if local_document is not None:
+                    logger.warning("openai_provider_fallback_to_local_pdf")
+                    return await finish(local_document)
+                raise
 
         # If Paddle is explicitly available in the environment, use it.
         try:

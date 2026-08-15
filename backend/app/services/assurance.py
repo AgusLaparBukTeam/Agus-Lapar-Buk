@@ -55,18 +55,22 @@ SHIPMENT_TRANSITIONS: dict[str, set[str]] = {
     ShipmentStatus.ASSESSING.value: {
         ShipmentStatus.REVIEW_REQUIRED.value,
         ShipmentStatus.HOLD.value,
-        ShipmentStatus.RELEASE_AUTHORIZED.value,
     },
     ShipmentStatus.REVIEW_REQUIRED.value: {
         ShipmentStatus.ASSESSING.value,
         ShipmentStatus.HOLD.value,
-        ShipmentStatus.RELEASE_AUTHORIZED.value,
     },
     ShipmentStatus.HOLD.value: {
         ShipmentStatus.REVIEW_REQUIRED.value,
         ShipmentStatus.ASSESSING.value,
     },
-    ShipmentStatus.RELEASE_AUTHORIZED.value: {ShipmentStatus.DISPATCHED.value},
+    # Pending and authorization transitions are repository-internal: they require a
+    # persisted release decision and a distinct second approver, respectively.
+    ShipmentStatus.RELEASE_PENDING_APPROVAL.value: {ShipmentStatus.RELEASE_INVALIDATED.value},
+    ShipmentStatus.RELEASE_AUTHORIZED.value: {
+        ShipmentStatus.DISPATCHED.value,
+        ShipmentStatus.RELEASE_INVALIDATED.value,
+    },
     ShipmentStatus.RELEASE_INVALIDATED.value: {
         ShipmentStatus.REVIEW_REQUIRED.value,
         ShipmentStatus.HOLD.value,

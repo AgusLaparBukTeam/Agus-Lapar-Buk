@@ -34,6 +34,7 @@ class ShipmentStatus(StrEnum):
     ASSESSING = "ASSESSING"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
     HOLD = "HOLD"
+    RELEASE_PENDING_APPROVAL = "RELEASE_PENDING_APPROVAL"
     RELEASE_AUTHORIZED = "RELEASE_AUTHORIZED"
     RELEASE_INVALIDATED = "RELEASE_INVALIDATED"
     DISPATCHED = "DISPATCHED"
@@ -365,6 +366,9 @@ class DashboardSummary(BaseModel):
 class AuditEventResponse(BaseModel):
     id: str
     actor_user_id: str | None
+    actor_service_account_id: str | None
+    actor_type: str
+    actor_id: str | None
     actor_display_name: str | None
     event_type: str
     entity_type: str

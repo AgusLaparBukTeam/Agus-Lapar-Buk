@@ -5,6 +5,7 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from app.core.errors import GateGuardError
 from app.repositories.operations import DomainEventRow, OperationsRepository
 from app.repositories.reconciliations import UserRow
 from app.services.document_storage import DocumentStorage
+from app.services.file_validation import validate_upload
 
 router = APIRouter()
 
@@ -333,6 +335,28 @@ def create_product(payload: ItemPayload, request: Request, user: UserRow = Depen
     return result
 
 
+@router.get("/api/items")
+def items(
+    request: Request,
+    q: str | None = None,
+    user: UserRow = Depends(current_user),
+):
+    org = organization(request, user)
+    return {"items": get_operations().list_items(organization_id=org.id, query=q)}
+
+
+@router.post("/api/items", status_code=201)
+def create_item(
+    payload: ItemPayload,
+    request: Request,
+    user: UserRow = Depends(current_user),
+):
+    org = organization(request, user)
+    result = get_operations().create_item(organization_id=org.id, payload=payload.model_dump())
+    audit(request, "shipment_item.created", "shipment_item", result["id"], user)
+    return result
+
+
 @router.get("/api/transport")
 def transport(
     request: Request, shipment_id: str | None = None, user: UserRow = Depends(current_user)
@@ -374,29 +398,22 @@ def documents(
     }
 
 
-@router.post("/api/documents", status_code=201)
-def create_document(
-    payload: DocumentMetadataPayload,
-    request: Request,
-    user: UserRow = Depends(current_user),
+@router.post("/api/documents", status_code=410)
+def create_document_metadata_legacy(
+    _: DocumentMetadataPayload,
+    __: Request,
+    ___: UserRow = Depends(current_user),
 ):
-    org = organization(request, user)
-    result = get_operations().create_document_metadata(
-        organization_id=org.id, user=user, payload=payload.model_dump()
+    """Reject metadata-only document creation; vault uploads must include validated bytes."""
+    raise GateGuardError(
+        "Document metadata cannot be created without a validated vault upload.",
+        code="DOCUMENT_UPLOAD_REQUIRED",
+        status_code=410,
     )
-    audit(
-        request,
-        "document.created",
-        "document",
-        result["id"],
-        user,
-        {"shipment_id": payload.shipment_id},
-    )
-    return result
 
 
 @router.post("/api/documents/upload", status_code=201)
-def upload_document(
+async def upload_document(
     request: Request,
     shipment_id: str = Form(..., min_length=1, max_length=36),
     document_type: str = Form(..., min_length=2, max_length=48),
@@ -406,30 +423,35 @@ def upload_document(
     user: UserRow = Depends(current_user),
 ):
     settings = get_settings()
-    content_type = (file.content_type or "").lower()
-    if content_type not in {item.lower() for item in settings.document_allowed_mime_types}:
+    safe_upload = await validate_upload(
+        file,
+        settings.max_upload_bytes,
+        settings.max_image_pixels,
+    )
+    if safe_upload.media_type not in {
+        item.split(";", 1)[0].strip().lower() for item in settings.document_allowed_mime_types
+    }:
         raise GateGuardError(
             "This file type is not allowed by the workspace document policy.",
             code="INVALID_MIME_TYPE",
             status_code=422,
         )
     org = organization(request, user)
-    filename = re.sub(r"[\x00-\x1f\x7f]", "", Path(file.filename or "document").name).strip()
-    if not filename or filename in {".", ".."}:
-        raise GateGuardError(
-            "A valid filename is required.", code="INVALID_FILENAME", status_code=422
-        )
     storage_key = f"{org.id}/{shipment_id}/{uuid.uuid4()}.bin"
     storage = DocumentStorage(settings.document_storage_root)
-    size_bytes, sha256 = storage.write(storage_key, file.file, max_bytes=settings.max_upload_bytes)
+    size_bytes, sha256 = storage.write(
+        storage_key,
+        BytesIO(safe_upload.data),
+        max_bytes=settings.max_upload_bytes,
+    )
     try:
         result = get_operations().create_document_version(
             organization_id=org.id,
             user=user,
             shipment_id=shipment_id,
             document_type=document_type,
-            filename=filename,
-            mime_type=content_type,
+            filename=safe_upload.filename,
+            mime_type=safe_upload.media_type,
             size_bytes=size_bytes,
             sha256=sha256,
             storage_key=storage_key,
@@ -787,7 +809,11 @@ def observability(request: Request, user: UserRow = Depends(current_user)):
             for worker in live_workers
         ],
         "extraction": "configured" if configured_extraction else "needs_setup",
-        "webhook": "configured" if any(item["enabled"] for item in webhooks) else "not_configured",
+        "webhook": (
+            "configured_not_dispatched"
+            if any(item["enabled"] for item in webhooks)
+            else "not_configured"
+        ),
         "connections": {
             "total": len(connections),
             "enabled": sum(item["status"] == "ENABLED" for item in connections),
@@ -884,12 +910,15 @@ def rule_packs(request: Request, user: UserRow = Depends(current_user)):
     org = organization(request, user)
     with get_operations().session_factory() as session:
         from sqlalchemy import or_, select
+        from sqlalchemy.orm import aliased
 
         from app.repositories.operations import RulePackRow
 
+        publisher = aliased(UserRow)
         rows = list(
-            session.scalars(
-                select(RulePackRow)
+            session.execute(
+                select(RulePackRow, publisher)
+                .outerjoin(publisher, publisher.id == RulePackRow.published_by)
                 .where(
                     or_(
                         RulePackRow.organization_id == org.id, RulePackRow.organization_id.is_(None)
@@ -900,8 +929,15 @@ def rule_packs(request: Request, user: UserRow = Depends(current_user)):
         )
         return {
             "items": [
-                {column.name: getattr(row, column.name) for column in row.__table__.columns}
-                for row in rows
+                {
+                    **{
+                        column.name: getattr(pack, column.name)
+                        for column in pack.__table__.columns
+                    },
+                    "source": "WORKSPACE" if pack.organization_id else "SHARED_BASELINE",
+                    "published_by_display_name": user_row.display_name if user_row else None,
+                }
+                for pack, user_row in rows
             ]
         }
 
@@ -1035,11 +1071,9 @@ def inbound_shipment(
             status_code=422,
         )
     raw_token = authorization[7:].strip()
-    org_id, user, scopes = get_operations().service_token_context(raw_token)
-    if "shipment.write" not in scopes:
-        raise GateGuardError(
-            "This token is not allowed to create shipments.", code="FORBIDDEN", status_code=403
-        )
+    principal = get_operations().service_token_context(raw_token)
+    principal.requires_scope("shipment.write")
+    org_id = principal.organization_id
     with get_operations().session_factory() as session:
         existing = list(
             session.scalars(
@@ -1058,12 +1092,14 @@ def inbound_shipment(
                 from app.repositories.reconciliations import ReconciliationRepository
 
                 return ReconciliationRepository(get_settings().database_url).get_shipment(
-                    shipment_id
+                    shipment_id, organization_id=org_id
                 )
     from app.repositories.reconciliations import ReconciliationRepository
 
     shipment = ReconciliationRepository(get_settings().database_url).create_shipment(
-        payload=payload, actor=user
+        organization_id=org_id,
+        payload=payload,
+        actor=principal,
     )
     with get_operations().session_factory() as session:
         session.add(
@@ -1078,4 +1114,15 @@ def inbound_shipment(
             )
         )
         session.commit()
+    from app.api.routes import get_repository
+
+    get_repository().record_audit(
+        "api.shipment.accepted",
+        "shipment",
+        entity_id=shipment["id"],
+        actor=principal,
+        organization_id=org_id,
+        metadata={"idempotency_key": idempotency_key},
+        request_id=request.state.request_id,
+    )
     return shipment

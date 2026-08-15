@@ -15,11 +15,20 @@ def current_user(request: Request) -> UserRow:
     return user
 
 
+def current_workspace_role(request: Request, user: UserRow) -> str:
+    """Resolve authorization from the authenticated user's active workspace membership."""
+    from app.api.operations import get_operations
+
+    operations = get_operations()
+    workspace = operations.organization_for(user, request.headers.get("x-gateguard-organization"))
+    return operations.membership_role_for(organization_id=workspace.id, user_id=user.id)
+
+
 def require_role(*roles: str) -> Callable:
     allowed = frozenset(roles)
 
-    def dependency(user: UserRow = Depends(current_user)) -> UserRow:
-        if user.role not in allowed:
+    def dependency(request: Request, user: UserRow = Depends(current_user)) -> UserRow:
+        if current_workspace_role(request, user) not in allowed:
             raise GateGuardError(
                 "You do not have permission for this operation.", code="FORBIDDEN", status_code=403
             )
@@ -28,6 +37,6 @@ def require_role(*roles: str) -> Callable:
     return dependency
 
 
-def is_at_least(user: UserRow, role: str) -> bool:
+def is_at_least(workspace_role: str, role: str) -> bool:
     levels = {"operator": 1, "supervisor": 2, "admin": 3}
-    return levels.get(user.role, 0) >= levels.get(role, 99)
+    return levels.get(workspace_role, 0) >= levels.get(role, 99)

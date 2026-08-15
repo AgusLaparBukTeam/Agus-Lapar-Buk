@@ -10,8 +10,8 @@ GateGuard dapat dianggap **siap rilis** hanya apabila seluruh kondisi berikut te
 |---|---|---|
 | Frontend | ESLint, Vitest, dan production build lulus; seluruh route dapat dibangun; tidak ada kontrol browser mentah yang terlihat pada UI operasional. | Output CI dan inspeksi visual desktop/mobile. |
 | UI/UX | Shell, form, tabel, dialog, empty state, loading state, error state, dan action state memakai primitive Kumo atau wrapper aplikasi yang setara. | Review screenshot sebelum/selesai dan walkthrough route utama. |
-| Backend | `pytest` dan `ruff check` lulus; migration idempoten; readiness PostgreSQL sehat. | Output CI dan health endpoint. |
-| Keamanan | Tidak ada credential di Git; CORS production spesifik origin; cookie aman; API key BFF aktif; header keamanan aktif; upload tervalidasi. | Secret scan, environment review, header check, dan test auth. |
+| Backend | `pytest` dan `ruff check` lulus; coverage tidak boleh turun di bawah 75%; migration idempoten; readiness PostgreSQL sehat. | Output CI dan health endpoint. |
+| Keamanan | Tidak ada credential di Git; CORS production spesifik origin; cookie aman; API key BFF aktif; header keamanan aktif; upload tervalidasi. | Gitleaks, Semgrep OSS, pip-audit, npm audit, Trivy, environment review, header check, dan test auth. |
 | AI/OCR | Dokumen diperlakukan sebagai data tak tepercaya; output terstruktur; evidence tidak direka; confidence rendah atau data tidak lengkap tidak dapat otomatis menjadi `CLEAR`. | Test ekstraksi, test keputusan, dan sample review non-produksi. |
 | Operasional | Backup, rollback, ownership, alert biaya, monitoring, dan prosedur akses insiden terdokumentasi. | Runbook deployment serta bukti timer/health pada lingkungan target. |
 
@@ -22,13 +22,20 @@ Sebelum merge, jalankan pemeriksaan berikut dari root repository. Jalankan backe
 ```bash
 cd backend
 uv run ruff check .
-uv run pytest
+uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
+uv tool run pip-audit .
 
 cd ../frontend
 node_modules/.bin/eslint .
 node_modules/.bin/vitest run
 node_modules/.bin/next build
+npm audit --omit=dev --audit-level=high
+
+cd ..
+uv tool run semgrep scan --config p/default --error --metrics=off backend/app frontend/app frontend/components frontend/lib
 ```
+
+GitHub Actions juga menjalankan Gitleaks, Trivy filesystem/IaC, build dan scan container backend/frontend, lalu mengunggah artifact SBOM source. Scan tersebut merupakan gate rilis; workflow tidak boleh menggunakan mode `continue-on-error` untuk menyamarkan temuan HIGH/CRITICAL atau secret.
 
 Build frontend harus menyelesaikan semua route App Router. Apabila sebuah route gagal build, halaman tersebut tidak boleh diasumsikan aman hanya karena route lain dapat dibuka.
 
@@ -58,7 +65,7 @@ Jika organisasi kelak membuat situs pemasaran publik, situs tersebut harus berad
 
 Sebelum traffic pengguna diarahkan ke rilis baru, pastikan domain HTTPS, `APP_PUBLIC_ORIGIN`, `CORS_ORIGINS`, `APP_API_KEY`, database PostgreSQL, dan credential provider OCR/AI sesuai environment target. Tidak ada secret yang boleh hard-coded pada Compose, cloud-init, atau workflow.
 
-Setelah merge ke `main`, timer deployment akan mendeteksi SHA baru dan membangun ulang container. Verifikasi endpoint berikut setelah deployment selesai:
+Setelah merge ke `main`, workflow mempublikasikan image immutable ke namespace GHCR pemilik repository dan timer deployment menarik SHA image tersebut. Override `GATEGUARD_IMAGE_OWNER` hanya digunakan bila registry deployment sengaja berbeda dari `origin`; jika tidak, script menentukan owner dari URL remote GitHub. Verifikasi endpoint berikut setelah deployment selesai:
 
 ```bash
 curl -fsS https://<domain>/login >/dev/null

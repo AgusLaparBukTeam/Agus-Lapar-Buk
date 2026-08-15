@@ -2,16 +2,16 @@
 # IMAGE_TAG must be an immutable commit SHA emitted by the publish workflow.
 services:
   migrate:
-    image: ghcr.io/aguslaparbukteam/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/${IMAGE_OWNER:?IMAGE_OWNER is required}/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
 
   seed:
-    image: ghcr.io/aguslaparbukteam/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/${IMAGE_OWNER:?IMAGE_OWNER is required}/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
 
   backend:
-    image: ghcr.io/aguslaparbukteam/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/${IMAGE_OWNER:?IMAGE_OWNER is required}/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
 
   worker:
-    image: ghcr.io/aguslaparbukteam/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/${IMAGE_OWNER:?IMAGE_OWNER is required}/gateguard-backend:${IMAGE_TAG:?IMAGE_TAG is required}
 
   frontend:
-    image: ghcr.io/aguslaparbukteam/gateguard-frontend:${IMAGE_TAG:?IMAGE_TAG is required}
+    image: ghcr.io/${IMAGE_OWNER:?IMAGE_OWNER is required}/gateguard-frontend:${IMAGE_TAG:?IMAGE_TAG is required}

@@ -30,9 +30,17 @@ git reset --hard "${TARGET_SHA}"
 
 if [[ "${DEPLOY_MODE}" == "images" ]]; then
   export IMAGE_TAG="${TARGET_SHA}"
+  remote_owner="$(git remote get-url origin | sed -nE 's#.*github\.com[:/]([^/]+)/[^/]+(\.git)?#\1#p')"
+  IMAGE_OWNER="${GATEGUARD_IMAGE_OWNER:-${remote_owner}}"
+  IMAGE_OWNER="$(printf '%s' "${IMAGE_OWNER}" | tr '[:upper:]' '[:lower:]')"
+  export IMAGE_OWNER
+  if [[ -z "${IMAGE_OWNER}" ]]; then
+    echo "Unable to determine IMAGE_OWNER from origin; set GATEGUARD_IMAGE_OWNER explicitly." >&2
+    exit 2
+  fi
   compose_files=(-f docker-compose.prod.yml -f docker-compose.prod.images.yml)
 
-  echo "Pulling immutable production images for ${IMAGE_TAG}."
+  echo "Pulling immutable production images for ${IMAGE_OWNER} at ${IMAGE_TAG}."
   docker compose "${compose_files[@]}" pull
   docker compose "${compose_files[@]}" up -d --no-build --remove-orphans
 elif [[ "${DEPLOY_MODE}" == "build" ]]; then
