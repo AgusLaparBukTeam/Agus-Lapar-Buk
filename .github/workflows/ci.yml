@@ -134,8 +134,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Scan tracked secrets with Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+      - name: Scan tracked secrets with Gitleaks CLI
+        run: >-
+          docker run --rm
+          -v "${GITHUB_WORKSPACE}:/repo:ro"
+          zricethezav/gitleaks:v8.23.3
+          detect --source=/repo --redact --no-banner --exit-code=1
 
       - name: Scan repository vulnerabilities and IaC with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
