@@ -30,6 +30,8 @@ class ReconciliationService:
     async def reconcile_uploads(
         self,
         uploads: dict[DocumentType, SafeUpload],
+        *,
+        organization_id: str,
     ) -> ReconciliationResult:
         started = time.perf_counter()
         ordered = list(uploads.items())
@@ -53,4 +55,4 @@ class ReconciliationService:
             audit=AuditState(system_decision=status),
             processing_ms=int((time.perf_counter() - started) * 1000),
         )
-        return self.repository.save(result)
+        return self.repository.save(result, organization_id=organization_id)

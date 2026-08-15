@@ -1,0 +1,127 @@
+/*
+ * GateGuard Cloudflare design contract.
+ * Kumo owns primitive behavior and semantic colors; this file fixes the app-level
+ * density, hierarchy, and layout rhythm so feature code does not invent a second UI system.
+ */
+:root {
+  /* Typography */
+  --cf-font-sans: var(--font-kumo, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  --cf-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --cf-text-page-title: 24px;
+  --cf-text-section-title: 16px;
+  --cf-text-body: 14px;
+  --cf-text-label: 13px;
+  --cf-text-metadata: 12px;
+  --cf-line-title: 1.25;
+  --cf-line-body: 1.45;
+  --cf-weight-regular: 400;
+  --cf-weight-medium: 500;
+  --cf-weight-heading: 600;
+
+  /* Spacing and shell */
+  --cf-space-1: 4px;
+  --cf-space-2: 8px;
+  --cf-space-3: 12px;
+  --cf-space-4: 16px;
+  --cf-space-5: 20px;
+  --cf-space-6: 24px;
+  --cf-space-7: 28px;
+  --cf-space-8: 32px;
+  --cf-shell-sidebar: 240px;
+  --cf-shell-sidebar-collapsed: 64px;
+  --cf-shell-topbar: 52px;
+  --cf-content-max: 1600px;
+  --cf-content-gutter: 32px;
+  --cf-section-gap: 20px;
+  --cf-control-height: 34px;
+  --cf-control-height-lg: 38px;
+  --cf-table-cell-y: 10px;
+  --cf-table-cell-x: 16px;
+
+  /* Kumo semantic surfaces */
+  --cf-canvas: var(--color-kumo-canvas);
+  --cf-surface: var(--color-kumo-base);
+  --cf-surface-raised: var(--color-kumo-elevated);
+  --cf-surface-subtle: var(--color-kumo-recessed);
+  --cf-line: var(--color-kumo-line);
+  --cf-hairline: var(--color-kumo-hairline);
+  --cf-text: var(--color-kumo-contrast);
+  --cf-text-muted: var(--color-kumo-neutral-750);
+  --cf-text-faint: var(--color-kumo-neutral-600);
+  --cf-link: var(--color-kumo-brand);
+  --cf-hover: var(--color-kumo-tint);
+  --cf-selected: var(--color-kumo-recessed);
+  --cf-disabled: var(--color-kumo-disabled);
+
+  /* Cloudflare dashboard is border-led and intentionally flat. */
+  --cf-radius-xs: 3px;
+  --cf-radius-sm: 4px;
+  --cf-radius-md: 6px;
+  --cf-shadow-overlay: var(--color-kumo-shadow-drop);
+
+  /* Compatibility aliases. Feature code may transition independently. */
+  --app-canvas: var(--cf-canvas);
+  --app-surface: var(--cf-surface);
+  --app-recessed: var(--cf-surface-subtle);
+  --app-elevated: var(--cf-surface-raised);
+  --app-line: var(--cf-line);
+  --app-hairline: var(--cf-hairline);
+  --app-text: var(--cf-text);
+  --app-muted: var(--cf-text-muted);
+  --app-link: var(--cf-link);
+  --app-radius: var(--cf-radius-sm);
+  --bg: var(--cf-canvas);
+  --panel: var(--cf-surface);
+  --muted: var(--cf-surface-subtle);
+  --border: var(--cf-line);
+  --text: var(--cf-text);
+  --subtle: var(--cf-text-muted);
+  --accent: var(--cf-link);
+  --primary: var(--color-kumo-brand);
+  --primary-hover: var(--color-kumo-brand-hover);
+}
+
+.cf-page-title {
+  margin: 0;
+  color: var(--cf-text);
+  font-size: var(--cf-text-page-title);
+  font-weight: var(--cf-weight-heading);
+  letter-spacing: -0.012em;
+  line-height: var(--cf-line-title);
+}
+
+.cf-section-title {
+  margin: 0;
+  color: var(--cf-text);
+  font-size: var(--cf-text-section-title);
+  font-weight: var(--cf-weight-heading);
+  line-height: 1.35;
+}
+
+.cf-label {
+  color: var(--cf-text);
+  font-size: var(--cf-text-label);
+  font-weight: var(--cf-weight-medium);
+  line-height: 1.4;
+}
+
+.cf-metadata {
+  color: var(--cf-text-muted);
+  font-size: var(--cf-text-metadata);
+  font-weight: var(--cf-weight-regular);
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  :root {
+    --cf-content-gutter: 20px;
+    --cf-section-gap: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --cf-content-gutter: 16px;
+    --cf-text-page-title: 22px;
+  }
+}

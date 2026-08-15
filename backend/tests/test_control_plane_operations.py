@@ -26,15 +26,9 @@ def test_workspace_record_and_service_token_idempotency():
     assert requirements.status_code == 200, requirements.text
     assert len(requirements.json()["items"]) >= 3
     document = client.post(
-        "/api/documents",
-        json={
-            "shipment_id": shipment_id,
-            "document_type": "INVOICE",
-            "filename": "invoice.pdf",
-            "mime_type": "application/pdf",
-            "size_bytes": 1200,
-            "sha256": "a" * 64,
-        },
+        "/api/documents/upload",
+        data={"shipment_id": shipment_id, "document_type": "INVOICE"},
+        files={"file": ("invoice.pdf", b"%PDF-1.4\n%control fixture\n", "application/pdf")},
     )
     assert document.status_code == 201, document.text
 
@@ -77,7 +71,7 @@ def test_document_vault_trusted_source_screening_and_worker_flow():
     upload = client.post(
         "/api/documents/upload",
         data={"shipment_id": shipment_id, "document_type": "COMMERCIAL_INVOICE"},
-        files={"file": ("invoice.pdf", b"trusted bytes", "application/pdf")},
+        files={"file": ("invoice.pdf", b"%PDF-1.4\n%accepted fixture\n", "application/pdf")},
     )
     assert upload.status_code == 201, upload.text
     uploaded = upload.json()
@@ -85,7 +79,7 @@ def test_document_vault_trusted_source_screening_and_worker_flow():
     assert "storage_key" not in uploaded["version"]
     downloaded = client.get(f"/api/documents/{uploaded['id']}/download")
     assert downloaded.status_code == 200
-    assert downloaded.content == b"trusted bytes"
+    assert downloaded.content == b"%PDF-1.4\n%accepted fixture\n"
 
     trusted = client.put(
         f"/api/shipments/{shipment_id}/trusted-reference",

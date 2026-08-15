@@ -35,9 +35,16 @@ jobs:
         working-directory: backend
         run: uv run ruff check app tests
 
-      - name: Test
+      - name: Test with coverage floor
         working-directory: backend
-        run: uv run pytest --cov=app --cov-report=term-missing
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-fail-under=75
+
+      - name: Audit Python dependencies
+        working-directory: backend
+        run: uv tool run pip-audit .
+
+      - name: Run Semgrep OSS SAST
+        run: uv tool run semgrep scan --config p/default --error --metrics=off backend/app frontend/app frontend/components frontend/lib
 
       - name: Migration smoke test
         working-directory: backend
@@ -71,6 +78,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Audit production npm dependencies
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Prepare compose environment
         run: cp .env.example .env
 
@@ -96,6 +107,7 @@ jobs:
         env:
           APP_API_KEY: ci-service-key-012345678901234567890123456789
           APP_PUBLIC_ORIGIN: https://gateguard.example.com
+          IMAGE_OWNER: ${{ github.repository_owner }}
           IMAGE_TAG: ci-image-sha
           POSTGRES_PASSWORD: ci-postgres-password
           SEED_USER_1_EMAIL: admin@gateguard.local
@@ -112,10 +124,79 @@ jobs:
         if: always()
         run: rm -f .env
 
+  supply-chain-security:
+    name: Supply-chain security
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Scan tracked secrets with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+
+      - name: Scan repository vulnerabilities and IaC with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Generate source SBOM artifact
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          artifact-name: gateguard-source-sbom
+          output-file: gateguard-source.spdx.json
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image for vulnerability scan
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          load: true
+          tags: gateguard-backend:ci
+
+      - name: Scan backend container image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: gateguard-backend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          exit-code: '1'
+          skip-setup-trivy: true
+
+      - name: Build frontend image for vulnerability scan
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          load: true
+          tags: gateguard-frontend:ci
+
+      - name: Scan frontend container image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: gateguard-frontend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          exit-code: '1'
+          skip-setup-trivy: true
+
   publish-production-images:
     name: Publish production images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: verify
+    needs: [verify, supply-chain-security]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -123,6 +204,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+
+      - name: Normalize GHCR image owner
+        id: image-owner
+        run: echo "value=$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -142,8 +227,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/aguslaparbukteam/gateguard-backend:${{ github.sha }}
-            ghcr.io/aguslaparbukteam/gateguard-backend:latest
+            ghcr.io/${{ steps.image-owner.outputs.value }}/gateguard-backend:${{ github.sha }}
+            ghcr.io/${{ steps.image-owner.outputs.value }}/gateguard-backend:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -158,8 +243,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/aguslaparbukteam/gateguard-frontend:${{ github.sha }}
-            ghcr.io/aguslaparbukteam/gateguard-frontend:latest
+            ghcr.io/${{ steps.image-owner.outputs.value }}/gateguard-frontend:${{ github.sha }}
+            ghcr.io/${{ steps.image-owner.outputs.value }}/gateguard-frontend:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

@@ -20,7 +20,7 @@ def test_override_preserves_system_decision(tmp_path: Path):
         mismatches=[],
         audit=AuditState(system_decision=ReconciliationStatus.REVIEW),
     )
-    repo.save(result)
+    repo.save(result, organization_id="test-workspace")
     updated = repo.override(
         result.session_id,
         OverrideRequest(

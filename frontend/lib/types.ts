@@ -115,6 +115,9 @@ export interface DashboardSummary {
 export interface AuditEvent {
   id: string;
   actor_user_id?: string | null;
+  actor_service_account_id?: string | null;
+  actor_type: string;
+  actor_id?: string | null;
   actor_display_name?: string | null;
   event_type: string;
   entity_type: string;

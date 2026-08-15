@@ -40,6 +40,7 @@ export function AppSelect({
         if (typeof next === "string") onValueChange(next);
       }}
       placeholder={resolvedPlaceholder}
+      renderValue={(selected) => options.find((option) => option.value === selected)?.label || selected}
       value={value || undefined}
     >
       {visibleOptions.map((option) => (

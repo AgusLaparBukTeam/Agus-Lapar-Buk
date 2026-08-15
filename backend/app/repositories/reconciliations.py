@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
@@ -18,9 +17,11 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
+from app.auth.principals import Principal, ServicePrincipal
 from app.core.errors import GateGuardError, NotFoundError
 from app.domain.models import (
     OverrideEvent,
@@ -32,6 +33,7 @@ from app.domain.models import (
     WorkQueueStatus,
 )
 from app.services.assurance import calculate_risk
+from app.services.release_integrity import build_release_snapshot, snapshot_hash
 
 
 class Base(DeclarativeBase):
@@ -110,6 +112,11 @@ class AuditEventRow(Base):
     actor_user_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=True, index=True
     )
+    actor_service_account_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    actor_type: Mapped[str] = mapped_column(String(16), default="system", index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     actor_display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     event_type: Mapped[str] = mapped_column(String(80), index=True)
     entity_type: Mapped[str] = mapped_column(String(80), index=True)
@@ -138,7 +145,12 @@ class ShipmentCaseRow(Base):
         nullable=True,
         index=True,
     )
-    created_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"))
+    created_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    created_by_service_account_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consignment_reference: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -300,17 +312,12 @@ class ReconciliationRepository:
             # Verify both connectivity and that required migrations have been applied.
             session.execute(select(ReconciliationRow.id).limit(1))
 
-    def save(self, result: ReconciliationResult) -> ReconciliationResult:
+    def save(self, result: ReconciliationResult, *, organization_id: str) -> ReconciliationResult:
+        if not organization_id:
+            raise ValueError("Reconciliations require an explicit organization ID.")
         now = datetime.now(UTC)
         shipment_id = _shipment_id(result)
         with self.session_factory() as session:
-            organization_id = (
-                session.scalar(
-                    select(ShipmentCaseRow.organization_id).where(ShipmentCaseRow.id == shipment_id)
-                )
-                if shipment_id
-                else None
-            )
             row = session.get(ReconciliationRow, result.session_id)
             if row is None:
                 row = ReconciliationRow(
@@ -340,17 +347,36 @@ class ReconciliationRepository:
         entity_type: str,
         *,
         entity_id: str | None = None,
-        actor: UserRow | None = None,
-        organization_id: str | None = None,
+        actor: UserRow | Principal | None = None,
+        organization_id: str,
         metadata: dict[str, Any] | None = None,
         request_id: str | None = None,
     ) -> None:
+        if not organization_id:
+            raise ValueError("Audit events require an explicit organization ID.")
         with self.session_factory() as session:
             session.add(
                 AuditEventRow(
                     id=str(uuid.uuid4()),
                     organization_id=organization_id,
-                    actor_user_id=actor.id if actor else None,
+                    actor_user_id=actor.id if isinstance(actor, UserRow) else None,
+                    actor_service_account_id=(
+                        actor.service_account_id if isinstance(actor, ServicePrincipal) else None
+                    ),
+                    actor_type=(
+                        actor.actor_type
+                        if actor is not None and hasattr(actor, "actor_type")
+                        else "human"
+                        if isinstance(actor, UserRow)
+                        else "system"
+                    ),
+                    actor_id=(
+                        actor.id
+                        if isinstance(actor, UserRow)
+                        else actor.actor_id
+                        if actor is not None
+                        else None
+                    ),
                     actor_display_name=actor.display_name if actor else None,
                     event_type=event_type,
                     entity_type=entity_type,
@@ -375,6 +401,11 @@ class ReconciliationRepository:
             user.password_hash = password_hash
             user.must_change_password = False
             user.updated_at = now
+            session.execute(
+                update(SessionRow)
+                .where(SessionRow.user_id == user_id, SessionRow.revoked_at.is_(None))
+                .values(revoked_at=now)
+            )
             session.commit()
             session.refresh(user)
             return user
@@ -384,7 +415,13 @@ class ReconciliationRepository:
             return session.get(UserRow, user_id)
 
     def create_user(
-        self, *, email: str, display_name: str, password_hash: str, role: str
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password_hash: str,
+        role: str,
+        organization_id: str | None = None,
     ) -> UserRow:
         now = datetime.now(UTC)
         user = UserRow(
@@ -404,32 +441,24 @@ class ReconciliationRepository:
                     "A user with this email already exists.", code="CONFLICT", status_code=409
                 )
             session.add(user)
-            session.commit()
-            session.refresh(user)
-            # New accounts are scoped to the default workspace immediately;
-            # later workspace switching is validated against memberships.
-            try:
+            if organization_id is not None:
                 from app.repositories.operations import OrganizationRow, WorkspaceMembershipRow
 
-                organization = session.scalar(
-                    select(OrganizationRow).order_by(OrganizationRow.created_at.asc())
-                )
-                if organization:
-                    session.add(
-                        WorkspaceMembershipRow(
-                            id=str(uuid.uuid4()),
-                            organization_id=organization.id,
-                            user_id=user.id,
-                            role=role,
-                            active=True,
-                            created_at=datetime.now(UTC),
-                        )
+                organization = session.get(OrganizationRow, organization_id)
+                if organization is None or not organization.active:
+                    raise NotFoundError("Workspace was not found.")
+                session.add(
+                    WorkspaceMembershipRow(
+                        id=str(uuid.uuid4()),
+                        organization_id=organization_id,
+                        user_id=user.id,
+                        role=role,
+                        active=True,
+                        created_at=now,
                     )
-                    session.commit()
-            except Exception:
-                # Legacy databases can be upgraded before the optional
-                # workspace tables exist; authentication must remain usable.
-                session.rollback()
+                )
+            session.commit()
+            session.refresh(user)
             return user
 
     def mark_login(self, user_id: str) -> None:
@@ -479,14 +508,16 @@ class ReconciliationRepository:
             "risk_level": row.risk_level,
             "assigned_to": row.assigned_to,
             "assigned_display_name": assignee.display_name if assignee else None,
-            "created_by": row.created_by,
+            "created_by": row.created_by or row.created_by_service_account_id or "system",
             "created_at": row.created_at,
             "updated_at": row.updated_at,
             "trusted_reference": trusted,
             "open_tasks": int(open_tasks),
         }
 
-    def create_shipment(self, *, payload: dict[str, Any], actor: UserRow) -> dict[str, Any]:
+    def create_shipment(
+        self, *, organization_id: str, payload: dict[str, Any], actor: UserRow | Principal
+    ) -> dict[str, Any]:
         # The legacy shipment API now writes into the same workspace boundary
         # as the operations API. Keep the lookup local to avoid an import cycle
         # while preserving compatibility for existing callers and databases.
@@ -503,36 +534,34 @@ class ReconciliationRepository:
         now = datetime.now(UTC)
         with self.session_factory() as session:
             organization = session.scalar(
-                select(OrganizationRow)
-                .join(
-                    WorkspaceMembershipRow,
-                    WorkspaceMembershipRow.organization_id == OrganizationRow.id,
-                )
-                .where(
-                    WorkspaceMembershipRow.user_id == actor.id,
-                    WorkspaceMembershipRow.active.is_(True),
+                select(OrganizationRow).where(
+                    OrganizationRow.id == organization_id,
                     OrganizationRow.active.is_(True),
                 )
-                .order_by(OrganizationRow.created_at.asc())
             )
             if organization is None:
-                organization = session.scalar(
-                    select(OrganizationRow).order_by(OrganizationRow.created_at.asc())
+                raise NotFoundError("Workspace was not found.")
+            if isinstance(actor, ServicePrincipal):
+                if actor.organization_id != organization_id:
+                    raise GateGuardError(
+                        "Service principal is not authorized for this workspace.",
+                        code="FORBIDDEN",
+                        status_code=403,
+                    )
+            else:
+                membership = session.scalar(
+                    select(WorkspaceMembershipRow).where(
+                        WorkspaceMembershipRow.organization_id == organization_id,
+                        WorkspaceMembershipRow.user_id == actor.id,
+                        WorkspaceMembershipRow.active.is_(True),
+                    )
                 )
-            if organization is None:
-                organization = OrganizationRow(
-                    id=str(uuid.uuid4()),
-                    name="GateGuard Operations",
-                    code="DEFAULT",
-                    default_timezone="UTC",
-                    default_locale="en-GB",
-                    default_currency="USD",
-                    active=True,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(organization)
-                session.flush()
+                if membership is None:
+                    raise GateGuardError(
+                        "You do not have access to this workspace.",
+                        code="FORBIDDEN",
+                        status_code=403,
+                    )
             facility = session.scalar(
                 select(FacilityRow)
                 .where(FacilityRow.organization_id == organization.id, FacilityRow.active.is_(True))
@@ -550,23 +579,6 @@ class ReconciliationRepository:
                     updated_at=now,
                 )
                 session.add(facility)
-            membership = session.scalar(
-                select(WorkspaceMembershipRow).where(
-                    WorkspaceMembershipRow.organization_id == organization.id,
-                    WorkspaceMembershipRow.user_id == actor.id,
-                )
-            )
-            if membership is None:
-                session.add(
-                    WorkspaceMembershipRow(
-                        id=str(uuid.uuid4()),
-                        organization_id=organization.id,
-                        user_id=actor.id,
-                        role=actor.role,
-                        active=True,
-                        created_at=now,
-                    )
-                )
             shipment = ShipmentCaseRow(
                 id=str(uuid.uuid4()),
                 organization_id=organization.id,
@@ -578,7 +590,10 @@ class ReconciliationRepository:
                 transport_mode=payload.get("transport_mode") or "Road",
                 status=ShipmentStatus.DOCUMENTS_REQUIRED.value,
                 risk_level=RiskLevel.LOW.value,
-                created_by=actor.id,
+                created_by=actor.id if isinstance(actor, UserRow) else None,
+                created_by_service_account_id=(
+                    actor.service_account_id if isinstance(actor, ServicePrincipal) else None
+                ),
                 created_at=now,
                 updated_at=now,
                 consignment_reference=payload.get("consignment_reference"),
@@ -890,6 +905,7 @@ class ReconciliationRepository:
             DomainEventRow,
             RequirementEvaluationRow,
             ShipmentExceptionRow,
+            TrustedShipmentReferenceRow,
         )
 
         now = datetime.now(UTC)
@@ -967,20 +983,35 @@ class ReconciliationRepository:
                     code="REVIEW_REQUIRED",
                     status_code=409,
                 )
-            snapshot = {
-                "shipment_status": shipment.status,
-                "missing_requirements": missing_requirements,
-                "blocking_checks": blocking_checks,
-                "blocking_exceptions": blocking_exceptions,
-                "open_tasks": int(open_tasks),
-            }
+            trusted_reference = session.scalar(
+                select(TrustedShipmentReferenceRow).where(
+                    TrustedShipmentReferenceRow.shipment_id == shipment_id,
+                    TrustedShipmentReferenceRow.organization_id == organization_id,
+                )
+            )
+            snapshot = build_release_snapshot(
+                missing_requirements=missing_requirements,
+                blocking_checks=blocking_checks,
+                blocking_exceptions=blocking_exceptions,
+                open_tasks=int(open_tasks),
+                trusted_reference_version=(
+                    trusted_reference.version if trusted_reference is not None else None
+                ),
+                trusted_reference_hash=(
+                    trusted_reference.content_hash if trusted_reference is not None else None
+                ),
+                assurance_versions={
+                    check_type: (check.status, check.source_version)
+                    for check_type, check in latest_checks.items()
+                },
+            )
             risk = calculate_risk(
                 [("BLOCKING_ASSURANCE", item) for item in blocking_checks]
                 + [("HIGH_CRITICAL_EXCEPTION", item) for item in blocking_exceptions]
                 + [("MISSING_REQUIRED_DOCUMENT", item) for item in missing_requirements]
             )
             shipment.status = (
-                ShipmentStatus.RELEASE_AUTHORIZED.value
+                ShipmentStatus.RELEASE_PENDING_APPROVAL.value
                 if decision == "AUTHORIZE"
                 else ShipmentStatus.HOLD.value
             )
@@ -997,9 +1028,7 @@ class ReconciliationRepository:
                 )
                 or 0
             ) + 1
-            evidence_hash = hashlib.sha256(
-                json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
+            evidence_hash = snapshot_hash(snapshot)
             shipment.updated_at = now
             session.add(
                 ReleaseDecisionRow(
@@ -1086,55 +1115,63 @@ class ReconciliationRepository:
                 session.commit()
             return user
 
-    def list_users(self) -> list[UserRow]:
+    def list_users(self, *, organization_id: str) -> list[UserRow]:
+        from app.repositories.operations import WorkspaceMembershipRow
+
         with self.session_factory() as session:
-            return list(session.scalars(select(UserRow).order_by(UserRow.created_at.desc())))
+            return list(
+                session.scalars(
+                    select(UserRow)
+                    .join(WorkspaceMembershipRow, WorkspaceMembershipRow.user_id == UserRow.id)
+                    .where(
+                        WorkspaceMembershipRow.organization_id == organization_id,
+                        WorkspaceMembershipRow.active.is_(True),
+                    )
+                    .order_by(UserRow.created_at.desc())
+                )
+            )
 
     def update_user(
-        self, user_id: str, *, role: str | None = None, active: bool | None = None
+        self,
+        user_id: str,
+        *,
+        organization_id: str,
+        role: str | None = None,
+        active: bool | None = None,
     ) -> UserRow:
+        from app.repositories.operations import WorkspaceMembershipRow
+
         with self.session_factory() as session:
+            membership = session.scalar(
+                select(WorkspaceMembershipRow).where(
+                    WorkspaceMembershipRow.organization_id == organization_id,
+                    WorkspaceMembershipRow.user_id == user_id,
+                )
+            )
             user = session.get(UserRow, user_id)
-            if user is None:
-                raise NotFoundError("User was not found.")
-            if active is False and user.role == "admin":
+            if user is None or membership is None:
+                raise NotFoundError("User was not found in this workspace.")
+            if (active is False or (role and role != "admin")) and membership.role == "admin":
                 active_admins = (
                     session.scalar(
-                        select(func.count(UserRow.id)).where(
-                            UserRow.role == "admin", UserRow.active.is_(True)
+                        select(func.count(WorkspaceMembershipRow.id)).where(
+                            WorkspaceMembershipRow.organization_id == organization_id,
+                            WorkspaceMembershipRow.role == "admin",
+                            WorkspaceMembershipRow.active.is_(True),
                         )
                     )
                     or 0
                 )
                 if active_admins <= 1:
                     raise GateGuardError(
-                        "The final active admin cannot be deactivated.",
-                        code="CONFLICT",
-                        status_code=409,
-                    )
-            if role and user.role == "admin" and role != "admin":
-                active_admins = (
-                    session.scalar(
-                        select(func.count(UserRow.id)).where(
-                            UserRow.role == "admin", UserRow.active.is_(True)
-                        )
-                    )
-                    or 0
-                )
-                if user.active and active_admins <= 1:
-                    raise GateGuardError(
-                        "The final active admin cannot lose admin role.",
+                        "The final active admin cannot lose workspace access.",
                         code="CONFLICT",
                         status_code=409,
                     )
             if role is not None:
-                user.role = role
+                membership.role = role
             if active is not None:
-                user.active = active
-                if not active:
-                    session.query(SessionRow).filter(
-                        SessionRow.user_id == user_id, SessionRow.revoked_at.is_(None)
-                    ).update({"revoked_at": datetime.now(UTC)})
+                membership.active = active
             user.updated_at = datetime.now(UTC)
             session.commit()
             session.refresh(user)
@@ -1336,6 +1373,9 @@ class ReconciliationRepository:
             )
             if row is None:
                 raise NotFoundError("Reconciliation session was not found.")
+            resolved_organization_id = organization_id or row.organization_id
+            if not resolved_organization_id:
+                raise ValueError("Reconciliation overrides require an organization ID.")
 
             now = datetime.now(UTC)
             result = ReconciliationResult.model_validate_json(row.result_json)
@@ -1390,8 +1430,8 @@ class ReconciliationRepository:
                 "previous_decision": str(previous),
                 "final_decision": request.final_decision.value,
             },
-            organization_id=organization_id,
+            organization_id=resolved_organization_id,
             request_id=request_id,
         )
 
-        return self.get(session_id, organization_id=organization_id)
+        return self.get(session_id, organization_id=resolved_organization_id)

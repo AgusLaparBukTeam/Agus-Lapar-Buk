@@ -32,18 +32,12 @@ class FakeResponse:
                 }
             ],
         }
-        return {
-            "output": [
-                {
-                    "type": "message",
-                    "content": [{"type": "output_text", "text": json.dumps(payload)}],
-                }
-            ]
-        }
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
 
 
 class FakeClient:
     last_payload = None
+    last_url = None
 
     def __init__(self, *args, **kwargs):
         pass
@@ -55,11 +49,12 @@ class FakeClient:
         return None
 
     async def post(self, url, headers, json):
+        FakeClient.last_url = url
         FakeClient.last_payload = json
         return FakeResponse()
 
 
-def test_openai_adapter_uses_schema_and_store_false(monkeypatch):
+def test_openai_adapter_uses_chat_completions_json_object_and_untrusted_policy(monkeypatch):
     monkeypatch.setattr("app.services.extraction.httpx.AsyncClient", FakeClient)
     settings = Settings(
         openai_api_key="test-key",
@@ -74,15 +69,20 @@ def test_openai_adapter_uses_schema_and_store_false(monkeypatch):
         data=b"\x89PNG\r\n\x1a\nfake",
         sha256="test-sha",
     )
+
     document = asyncio.run(extractor.extract(upload, DocumentType.INVOICE))
+
     assert document.recipient.value == "PT Maju Jaya"
     assert document.items[0].quantity.value == 100
     assert document.detected_document_type == DocumentType.INVOICE
     assert document.document_type_confidence == 0.65
     assert document.line_items_complete is False
-    assert FakeClient.last_payload["store"] is False
-    assert FakeClient.last_payload["text"]["format"]["type"] == "json_schema"
-    policy = FakeClient.last_payload["input"][0]["content"][0]["text"]
-    assert FakeClient.last_payload["input"][0]["role"] == "developer"
+    assert FakeClient.last_url == "https://api.openai.com/v1/chat/completions"
+    assert FakeClient.last_payload["response_format"] == {"type": "json_object"}
+    policy = FakeClient.last_payload["messages"][0]["content"]
+    assert FakeClient.last_payload["messages"][0]["role"] == "developer"
     assert "UNTRUSTED DATA" in policy
-    assert FakeClient.last_payload["input"][1]["role"] == "user"
+    assert FakeClient.last_payload["messages"][1]["role"] == "user"
+    image = FakeClient.last_payload["messages"][1]["content"][1]
+    assert image["type"] == "image_url"
+    assert image["image_url"]["url"].startswith("data:image/png;base64,")

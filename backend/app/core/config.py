@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     worker_heartbeat_interval_seconds: float = 10.0
 
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5"
+    openai_model: str = "gpt-5-mini"
     openai_base_url: str = "https://api.openai.com/v1"
     openai_timeout_seconds: float = 45.0
     paddle_device: str = "cpu"

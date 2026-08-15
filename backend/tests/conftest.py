@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy import select
+
 os.environ["DATABASE_URL"] = (
     f"sqlite:///{Path(os.getenv('TEMP', '.')) / f'gateguard-tests-{uuid4().hex}.db'}"
 )
@@ -9,6 +11,7 @@ os.environ["DATABASE_URL"] = (
 from app.auth.passwords import hash_password
 from app.core.config import get_settings
 from app.domain.models import DocumentField, DocumentType, ShipmentDocument, ShipmentItem
+from app.repositories.operations import OperationsRepository, OrganizationRow
 from app.repositories.reconciliations import ReconciliationRepository
 
 TEST_EMAIL = "test-admin@gateguard.local"
@@ -22,13 +25,22 @@ def login(client):
 
 
 def pytest_configure():
-    repository = ReconciliationRepository(get_settings().database_url)
+    settings = get_settings()
+    repository = ReconciliationRepository(settings.database_url)
+    operations = OperationsRepository(settings.database_url)
+    with operations.session_factory() as session:
+        organization = session.scalar(
+            select(OrganizationRow).where(OrganizationRow.code == "DEFAULT")
+        )
+    assert organization is not None
+    organization_id = organization.id
     if repository.get_user_by_email(TEST_EMAIL) is None:
         repository.create_user(
             email=TEST_EMAIL,
             display_name="Test Admin",
             password_hash=hash_password(TEST_PASSWORD),
             role="admin",
+            organization_id=organization_id,
         )
 
 

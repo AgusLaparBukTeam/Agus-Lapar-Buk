@@ -1,2 +1,30 @@
-import { OperationRegister } from "@/components/operations/operation-register";
-export default function ReleasesPage() { return <OperationRegister kind="releases" />; }
+"use client";
+
+import { Dialog, DialogRoot } from "@cloudflare/kumo/components/dialog";
+import { Input } from "@cloudflare/kumo/components/input";
+import { Table } from "@cloudflare/kumo/components/table";
+import { CheckCircleIcon as CheckCircle, ShieldCheckIcon as ShieldCheck } from "@phosphor-icons/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { ActionLink, Button } from "@/components/ui/button";
+import { LifecycleTrack, OperationalState } from "@/components/ui/operational-primitives";
+import { PageHeader } from "@/components/ui/page-header";
+import { CloudflarePageShell, DataTableSurface, EmptyState } from "@/components/ui/page-primitives";
+import { approveRelease, fetchMe, fetchOperationsList } from "@/lib/api";
+
+type Row = Record<string, unknown>;
+function date(value: unknown) { return value ? new Date(String(value)).toLocaleString("id-ID") : "—"; }
+function lifecycle(row: Row) { if (row.invalidated_at) return "INVALIDATED"; if (String(row.decision) === "HOLD") return "REJECTED"; return Number(row.sequence || 1) >= 2 ? "AUTHORIZED" : "PENDING SECOND APPROVAL"; }
+
+export default function ReleasesPage() {
+  const client = useQueryClient();
+  const [selected, setSelected] = useState<Row | null>(null);
+  const [comment, setComment] = useState("");
+  const me = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
+  const result = useQuery({ queryKey: ["releases"], queryFn: () => fetchOperationsList("/releases") });
+  const approve = useMutation({ mutationFn: () => approveRelease(String(selected?.id), comment), onSuccess: () => { setComment(""); setSelected(null); client.invalidateQueries({ queryKey: ["releases"] }); } });
+  const rows = useMemo(() => result.data?.items ?? [], [result.data?.items]);
+  const canApprove = me.data?.role === "admin" || me.data?.role === "supervisor";
+  const counts = useMemo(() => ({ pending: rows.filter((row) => lifecycle(row) === "PENDING SECOND APPROVAL").length, authorized: rows.filter((row) => lifecycle(row) === "AUTHORIZED").length }), [rows]);
+  return <CloudflarePageShell className="cf-releases-page"><PageHeader icon={ShieldCheck} title="Keputusan pelepasan" description="Lifecycle menampilkan keputusan pertama dan persetujuan kedua secara terpisah. Otorisasi hanya tampil setelah backend menyelesaikan four-eyes approval." /><section className="cf-release-lifecycle-guide"><LifecycleTrack steps={[{ label: "PROPOSED", detail: "Keputusan pertama direkam.", state: "complete" }, { label: "PENDING SECOND APPROVAL", detail: `${counts.pending} menunggu approver berbeda.`, state: counts.pending ? "current" : "future" }, { label: "AUTHORIZED", detail: `${counts.authorized} keputusan telah memenuhi approval kedua.`, state: counts.authorized ? "complete" : "future" }, { label: "INVALIDATED / REJECTED", detail: "Perubahan bukti atau HOLD menahan lifecycle.", state: "blocked" }]} /></section>{result.isPending ? <div className="page-loading">Memuat keputusan pelepasan…</div> : result.isError ? <div role="alert" className="notice notice--danger">Keputusan pelepasan tidak tersedia saat ini.</div> : <DataTableSurface title="Release decision register" description="Snapshot bukti dan actor keputusan tersimpan pada backend. Status tidak dihitung ulang di frontend.">{rows.length ? <div className="table-scroll"><Table><Table.Header sticky><Table.Row><Table.Head>Pengiriman</Table.Head><Table.Head>Lifecycle</Table.Head><Table.Head>Keputusan</Table.Head><Table.Head>Urutan</Table.Head><Table.Head>Diputuskan oleh</Table.Head><Table.Head>Alasan</Table.Head><Table.Head>Waktu</Table.Head><Table.Head><span className="sr-only">Aksi</span></Table.Head></Table.Row></Table.Header><Table.Body>{rows.map((row) => { const state = lifecycle(row); const firstAuthorization = String(row.decision) === "AUTHORIZE" && Number(row.sequence || 1) === 1 && !row.invalidated_at; return <Table.Row key={String(row.id)}><Table.Cell>{row.shipment_id ? <ActionLink href={`/shipments/${String(row.shipment_id)}`} variant="ghost">{String(row.shipment_reference || "Pengiriman")}</ActionLink> : String(row.shipment_reference || "—")}</Table.Cell><Table.Cell><OperationalState value={state} /></Table.Cell><Table.Cell>{String(row.decision || "—")}</Table.Cell><Table.Cell>{Number(row.sequence || 1) === 1 ? "Keputusan pertama" : "Persetujuan kedua"}</Table.Cell><Table.Cell>{String(row.issued_by_name || "—")}</Table.Cell><Table.Cell>{String(row.reason || "—")}</Table.Cell><Table.Cell>{date(row.invalidated_at || row.created_at)}</Table.Cell><Table.Cell>{canApprove && firstAuthorization ? <Button variant="secondary" size="sm" onClick={() => setSelected(row)}>Setujui kedua</Button> : <span className="cf-metadata">{state === "PENDING SECOND APPROVAL" ? "Menunggu approver" : "—"}</span>}</Table.Cell></Table.Row>; })}</Table.Body></Table></div> : <EmptyState icon={<CheckCircle size={20} />} title="Belum ada keputusan pelepasan" description="Keputusan akan muncul setelah reviewer memproses pengiriman." />}</DataTableSurface>}<DialogRoot open={Boolean(selected)} onOpenChange={(open) => { if (!open) { setSelected(null); setComment(""); } }}><Dialog className="cf-release-approval-dialog"><Dialog.Title>Persetujuan kedua</Dialog.Title><Dialog.Description>Backend memverifikasi approver berbeda, snapshot bukti, dan keputusan yang belum di-invalidasi sebelum mengotorisasi pelepasan.</Dialog.Description><form className="dialog-form" onSubmit={(event) => { event.preventDefault(); approve.mutate(); }}><Input label="Catatan persetujuan" value={comment} minLength={2} onChange={(event) => setComment(event.target.value)} description="Minimal 2 karakter untuk audit." />{approve.isError && <p role="alert" className="form-error">{(approve.error as Error).message}</p>}<div className="form-panel__actions"><Button type="button" variant="secondary" onClick={() => setSelected(null)}>Batal</Button><Button type="submit" disabled={approve.isPending || comment.trim().length < 2}>{approve.isPending ? "Menyetujui…" : "Setujui kedua"}</Button></div></form></Dialog></DialogRoot></CloudflarePageShell>;
+}

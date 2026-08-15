@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, time, timedelta
 from functools import lru_cache
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 
@@ -45,6 +46,45 @@ from app.services.file_validation import ensure_distinct_uploads, validate_uploa
 from app.services.reconciliation_service import ReconciliationService
 
 router = APIRouter()
+
+_AUDIT_SENSITIVE_KEY_PARTS = (
+    "secret",
+    "token",
+    "password",
+    "credential",
+    "authorization",
+    "api_key",
+    "cookie",
+)
+
+
+def safe_audit_metadata(value: Any, *, depth: int = 0) -> Any:
+    """Render persisted audit metadata without exposing secrets or unbounded payloads."""
+    if depth > 4:
+        return "[truncated]"
+    if isinstance(value, dict):
+        return {
+            str(key): "[redacted]"
+            if any(part in str(key).casefold() for part in _AUDIT_SENSITIVE_KEY_PARTS)
+            else safe_audit_metadata(item, depth=depth + 1)
+            for key, item in list(value.items())[:50]
+        }
+    if isinstance(value, list):
+        return [safe_audit_metadata(item, depth=depth + 1) for item in value[:50]]
+    if isinstance(value, str):
+        return value if len(value) <= 1_000 else f"{value[:1_000]}… [truncated]"
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:1_000]
+
+
+def audit_metadata_for_console(raw_metadata: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw_metadata)
+    except json.JSONDecodeError:
+        return {"notice": "Metadata audit tidak dapat dibaca."}
+    safe_value = safe_audit_metadata(parsed)
+    return safe_value if isinstance(safe_value, dict) else {"value": safe_value}
 
 
 @lru_cache
@@ -94,12 +134,22 @@ def readiness_summary() -> dict[str, str]:
 def login(body: LoginRequest, request: Request, response: Response):
     user = authenticate(get_repository(), body.email, body.password)
     if user is None:
-        get_repository().record_audit(
-            "auth.login.failure",
-            "user",
-            metadata={"email": body.email.strip().casefold()},
-            request_id=request.state.request_id,
-        )
+        attempted_user = get_repository().get_user_by_email(body.email.strip().casefold())
+        if attempted_user is not None:
+            try:
+                workspace = get_workspace(request, attempted_user)
+                get_repository().record_audit(
+                    "auth.login.failure",
+                    "user",
+                    entity_id=attempted_user.id,
+                    actor=attempted_user,
+                    organization_id=workspace.id,
+                    metadata={"email": body.email.strip().casefold()},
+                    request_id=request.state.request_id,
+                )
+            except GateGuardError:
+                # Legacy users without a workspace cannot produce a tenant-scoped audit event.
+                pass
         raise GateGuardError(
             "Email or password is incorrect.", code="INVALID_CREDENTIALS", status_code=401
         )
@@ -129,13 +179,19 @@ def logout(request: Request, response: Response):
     token = request.cookies.get(SESSION_COOKIE)
     user = get_repository().revoke_session(session_hash(token)) if token else None
     if user:
-        get_repository().record_audit(
-            "auth.logout",
-            "user",
-            entity_id=user.id,
-            actor=user,
-            request_id=request.state.request_id,
-        )
+        try:
+            workspace = get_workspace(request, user)
+            get_repository().record_audit(
+                "auth.logout",
+                "user",
+                entity_id=user.id,
+                actor=user,
+                organization_id=workspace.id,
+                request_id=request.state.request_id,
+            )
+        except GateGuardError:
+            # Session revocation must still succeed for a legacy user with no active workspace.
+            pass
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"status": "ok"}
 
@@ -182,13 +238,14 @@ async def reconcile_documents(
         ),
     }
     ensure_distinct_uploads(safe)
-    result = await get_service().reconcile_uploads(safe)
+    workspace = get_workspace(request, user)
+    result = await get_service().reconcile_uploads(safe, organization_id=workspace.id)
     get_repository().record_audit(
         "reconciliation.created",
         "reconciliation",
         entity_id=result.session_id,
         actor=user,
-        organization_id=get_workspace(request, user).id,
+        organization_id=workspace.id,
         metadata={"status": result.status.value, "processing_ms": result.processing_ms},
         request_id=request.state.request_id,
     )
@@ -198,7 +255,6 @@ async def reconcile_documents(
         if shipment_document and shipment_document.shipment_id.value is not None
         else None
     )
-    workspace = get_workspace(request, user)
     from app.api.operations import get_operations
 
     get_operations().record_reconciliation_check(
@@ -313,13 +369,18 @@ def create_shipment(
     request: Request,
     user: UserRow = Depends(current_user),
 ):
-    shipment = get_repository().create_shipment(payload=body.model_dump(), actor=user)
+    workspace = get_workspace(request, user)
+    shipment = get_repository().create_shipment(
+        organization_id=workspace.id,
+        payload=body.model_dump(),
+        actor=user,
+    )
     get_repository().record_audit(
         "shipment.created",
         "shipment",
         entity_id=shipment["id"],
         actor=user,
-        organization_id=get_workspace(request, user).id,
+        organization_id=workspace.id,
         metadata={"status": shipment["status"]},
         request_id=request.state.request_id,
     )
@@ -421,11 +482,14 @@ def audit(request: Request, user: UserRow = Depends(require_role("admin", "super
         AuditEventResponse(
             id=row.id,
             actor_user_id=row.actor_user_id,
+            actor_service_account_id=row.actor_service_account_id,
+            actor_type=row.actor_type,
+            actor_id=row.actor_id,
             actor_display_name=row.actor_display_name,
             event_type=row.event_type,
             entity_type=row.entity_type,
             entity_id=row.entity_id,
-            metadata=json.loads(row.metadata_json),
+            metadata=audit_metadata_for_console(row.metadata_json),
             request_id=row.request_id,
             created_at=row.created_at,
         )
@@ -458,13 +522,14 @@ def monitoring(request: Request, user: UserRow = Depends(current_user)):
 
 @router.get("/api/users", response_model=list[UserResponse])
 def users(
-    _: UserRow = Depends(
-        require_role(
-            "admin",
-        )
-    ),
+    request: Request,
+    actor: UserRow = Depends(require_role("admin")),
 ):
-    return [user_response(user) for user in get_repository().list_users()]
+    workspace = get_workspace(request, actor)
+    return [
+        user_response(user)
+        for user in get_repository().list_users(organization_id=workspace.id)
+    ]
 
 
 @router.post("/api/users", response_model=UserResponse, status_code=201)
@@ -483,18 +548,20 @@ def create_user(
             code="ADMIN_ROLE_RESERVED",
             status_code=422,
         )
+    workspace = get_workspace(request, actor)
     user = get_repository().create_user(
         email=body.email,
         display_name=body.display_name,
         password_hash=require_password(body.password),
         role=body.role.value,
+        organization_id=workspace.id,
     )
     get_repository().record_audit(
         "user.created",
         "user",
         entity_id=user.id,
         actor=actor,
-        organization_id=get_workspace(request, actor).id,
+        organization_id=workspace.id,
         metadata={"role": user.role},
         request_id=request.state.request_id,
     )
@@ -518,8 +585,10 @@ def update_user(
             code="ADMIN_ROLE_RESERVED",
             status_code=422,
         )
+    workspace = get_workspace(request, actor)
     user = get_repository().update_user(
         user_id,
+        organization_id=workspace.id,
         role=body.role.value if body.role else None,
         active=body.active,
     )
@@ -528,7 +597,7 @@ def update_user(
         "user",
         entity_id=user.id,
         actor=actor,
-        organization_id=get_workspace(request, actor).id,
+        organization_id=workspace.id,
         metadata={"role": user.role, "active": user.active},
         request_id=request.state.request_id,
     )

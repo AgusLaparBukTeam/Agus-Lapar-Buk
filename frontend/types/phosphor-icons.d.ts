@@ -48,9 +48,11 @@ declare module "@phosphor-icons/react" {
   export const ActivityIcon: Icon;
   export const ArchiveIcon: Icon;
   export const ArrowLeftIcon: Icon;
+  export const ArrowsClockwiseIcon: Icon;
   export const CaretDownIcon: Icon;
   export const CaretRightIcon: Icon;
   export const ChartLineIcon: Icon;
+  export const CopyIcon: Icon;
   export const CheckCircleIcon: Icon;
   export const ClipboardTextIcon: Icon;
   export const ClockIcon: Icon;
@@ -60,6 +62,7 @@ declare module "@phosphor-icons/react" {
   export const FileIcon: Icon;
   export const FileArrowUpIcon: Icon;
   export const FileTextIcon: Icon;
+  export const FunnelIcon: Icon;
   export const GearIcon: Icon;
   export const HouseIcon: Icon;
   export const ListChecksIcon: Icon;
@@ -68,7 +71,11 @@ declare module "@phosphor-icons/react" {
   export const MagnifyingGlassMinusIcon: Icon;
   export const MagnifyingGlassPlusIcon: Icon;
   export const PackageIcon: Icon;
+  export const PlugsConnectedIcon: Icon;
+  export const PlayIcon: Icon;
+  export const PulseIcon: Icon;
   export const PlusIcon: Icon;
+  export const QueueIcon: Icon;
   export const ShieldCheckIcon: Icon;
   export const SignOutIcon: Icon;
   export const SidebarSimpleIcon: Icon;
@@ -80,5 +87,6 @@ declare module "@phosphor-icons/react" {
   export const WarningIcon: Icon;
   export const WarningCircleIcon: Icon;
   export const WarningOctagonIcon: Icon;
+  export const WebhooksLogoIcon: Icon;
   export const XIcon: Icon;
 }
