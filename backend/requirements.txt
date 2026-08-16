@@ -17,5 +17,5 @@ argon2-cffi>=25.1,<26
 # Explicit runtime patches for packages preinstalled or vendored by the Python base image.
 # Setuptools 84+ vendors patched jaraco.context and wheel metadata for the image scan.
 setuptools>=84
-jaraco.context>=6.1.0
+jaraco.context>=6.1.2
 wheel>=0.46.2
